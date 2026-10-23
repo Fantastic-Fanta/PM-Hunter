@@ -1807,6 +1807,9 @@ def diagnose(cfg):
         ok += same
         print(f"  {name}: {'ok' if same else 'DIFFERENT'}  read {describe(enc)}  ({time.time() - start:.1f} s)"
               + ("" if same else f"  expected {want}"))
+        if not same:  # what the OCR saw in the enemy's box, to tell why
+            print("    the box's text: " + ", ".join(f"{t!r} at ({x:.2f}, {y:.2f})"
+                                                    for t, x, y in ocr(img.crop(lay.box(BOX)))))
     print(f"  {ok} of {len(EXPECTED)} read like on the Mac")
     CAL_FILE = real
     cal.clear()

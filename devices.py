@@ -70,6 +70,9 @@ def _ocr_windows(img):
             sys.exit("Windows has no OCR language: Settings > Time & language > Language, add English.")
         _win_engine.append(engine)
     most = OcrEngine.max_image_dimension
+    if max(img.size) < 1500:  # Windows misses small text (a reskin, a gradient tab) that Vision reads
+        k = min(3.0, 1500 / max(img.size))
+        img = img.resize((int(img.width * k), int(img.height * k)), Image.LANCZOS)
     if max(img.size) > most:
         k = most / max(img.size)
         img = img.resize((int(img.width * k), int(img.height * k)), Image.LANCZOS)
