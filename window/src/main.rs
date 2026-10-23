@@ -36,6 +36,11 @@ const NAME: &str = match option_env!("HUNT_NAME") {
 const W: f32 = 340.0; // the pill
 const H: f32 = 40.0;
 const CONTROL: f32 = 26.0; // every button and box is this tall
+// room round the pill in its window (see-through): for its glow, ripples and shadow.
+// The pill's place (pos, window.json) is the pill's own; the window is M up and left of it.
+const M: f32 = 16.0;
+const MARGIN: Vec2 = Vec2::splat(M);
+const WINDOW: Vec2 = Vec2::new(W + 2.0 * M, H + 2.0 * M);
 const INSET: f32 = (H - CONTROL) / 2.0; // the same room all round the pill's ends
 const TEXT: f32 = 13.0; // the words' size (a whole number draws crisper)
 
@@ -44,6 +49,9 @@ const BIG: f32 = 160.0; // its size, at first
 const INTRO_MOVE: f32 = 1.55; // s: when it sets off (it's come in and breathed by then)
 const INTRO_LAND: f32 = 2.35; // s: when it's the pill's end, play in it
 const INTRO_END: f32 = 2.65; // s: the landing's ripple gone, the window back over the pill
+// the closing: the pill shrinks rightwards into a ball, and the ball goes
+const FOLD: f32 = 0.3; // s, shrinking into the ball
+const VANISH: f32 = 0.25; // s, the ball going
 
 const INK: Color32 = Color32::from_rgb(0x11, 0x11, 0x11);
 const PAPER: Color32 = Color32::WHITE;
@@ -72,6 +80,23 @@ fn look(light: bool) -> Look {
     } else {
         Look { fill: INK, ink: PAPER, dim: gray(0x84), edge: gray(0x2c), hover: gray(0x26), boxed: gray(0x1d) }
     }
+}
+
+/// The black look and the white one, k of the way (a find fades it white).
+fn look_at(k: f32) -> Look {
+    let (a, b) = (look(false), look(true));
+    let mix = |x: Color32, y: Color32| {
+        let m = |p: u8, q: u8| (p as f32 + (q as f32 - p as f32) * k).round() as u8;
+        Color32::from_rgba_premultiplied(m(x.r(), y.r()), m(x.g(), y.g()), m(x.b(), y.b()), m(x.a(), y.a()))
+    };
+    Look { fill: mix(a.fill, b.fill), ink: mix(a.ink, b.ink), dim: mix(a.dim, b.dim), edge: mix(a.edge, b.edge),
+           hover: mix(a.hover, b.hover), boxed: mix(a.boxed, b.boxed) }
+}
+
+/// A button under the mouse grows a little; pressed, it gives a little.
+fn press(ctx: &egui::Context, resp: &egui::Response) -> f32 {
+    let goal = if resp.is_pointer_button_down_on() { 0.9 } else if resp.hovered() { 1.07 } else { 1.0 };
+    ctx.animate_value_with_time(resp.id.with("press"), goal, 0.12)
 }
 
 fn gray(v: u8) -> Color32 {
@@ -161,6 +186,12 @@ enum Msg {
     UpdateFailed(String),
 }
 
+/// The closing: the pill shrinking into a ball at its right end, the ball going.
+struct Closing {
+    started: Instant,
+    install: bool, // the update's installer runs once it's done
+}
+
 /// The opening's window: started once it's over the whole screen.
 struct Intro {
     started: Option<Instant>,
@@ -223,6 +254,11 @@ struct Hunt {
     was_found: String,
     born: Option<Instant>, // the pill's own opening (stretching out from play): its first frame
     intro: Option<Intro>,   // the big Clodsire, while it's on
+    closing: Option<Closing>, // ✕ (or an update): the opening the other way
+    closed: bool,           // the closing's done: the window may go
+    lifted: Option<Instant>, // being dragged, since
+    moved_at: Option<Instant>, // its place last changed
+    found_at: Option<Instant>, // the find on show, since
     smoke: Option<Smoke>,
     start_now: bool, // the hunter starts with Hunt, paused (--start: hunting)
 }
@@ -287,6 +323,11 @@ impl Hunt {
             pos_changed: None,
             was_found: String::new(),
             born: None,
+            closing: None,
+            closed: false,
+            lifted: None,
+            moved_at: None,
+            found_at: None,
             // (only where it's see-through: on Direct3D the window over the screen would be black)
             intro: ((!env::args().any(|a| a == "--smoke") || env::args().any(|a| a == "--intro"))
                     && env::var_os("HUNT_NO_INTRO").is_none() && env::var_os("HUNT_RENDERER").is_none())
@@ -297,6 +338,9 @@ impl Hunt {
         };
         hunt.hook = hunt.hook_saved();
         hunt.check_update();
+        if let (Some(smoke), true) = (hunt.smoke.as_mut(), hunt.intro.is_some()) {
+            smoke.after = INTRO_END + 0.8;
+        }
         hunt
     }
 
@@ -678,8 +722,14 @@ impl Hunt {
         });
     }
 
-    /// The installer replaces Hunt's folder and starts the new Hunt; this one gets out of its way.
+    /// The installer replaces Hunt's folder and starts the new Hunt; this one gets out of its way
+    /// (with its closing first).
     fn install(&mut self) {
+        let ctx = self.ctx.clone();
+        self.close_with(&ctx, true);
+    }
+
+    fn run_installer(&mut self) {
         #[cfg(windows)]
         if let Some(setup) = &self.installer {
             use std::os::windows::process::CommandExt;
@@ -688,7 +738,6 @@ impl Hunt {
                 .creation_flags(0x0000_0008) // DETACHED_PROCESS
                 .spawn();
         }
-        self.ctx.send_viewport_cmd(ViewportCommand::Close);
     }
 
     // ------------------------------------------------------------ the window's place and size
@@ -707,14 +756,15 @@ impl Hunt {
         if self.pos.is_none() {
             // first time on this PC: the top middle
             let at = pos2(((screen.x - W) / 2.0).round(), 60.0);
-            ctx.send_viewport_cmd(ViewportCommand::OuterPosition(at));
+            ctx.send_viewport_cmd(ViewportCommand::OuterPosition(at - MARGIN));
             self.pos = Some(at);
             return;
         }
-        let at = outer.min;
+        let at = outer.min + MARGIN;
         if (at - self.pos.unwrap()).length() > 0.5 {
             self.pos = Some(at);
             self.pos_changed = Some(Instant::now());
+            self.moved_at = self.pos_changed;
         }
         if self.pos_changed.is_some_and(|t| t.elapsed() > Duration::from_millis(800)) && self.pos != self.pos_saved {
             let p = self.pos.unwrap();
@@ -756,12 +806,12 @@ impl Hunt {
             // back over the pill; nothing's drawn till the window's there (or it was
             // drawn in the screen's corner for a frame)
             intro.handover = Some(Instant::now());
-            ctx.send_viewport_cmd(ViewportCommand::InnerSize(vec2(W, H)));
-            ctx.send_viewport_cmd(ViewportCommand::OuterPosition(self.pos.unwrap_or(Pos2::ZERO)));
+            ctx.send_viewport_cmd(ViewportCommand::InnerSize(WINDOW));
+            ctx.send_viewport_cmd(ViewportCommand::OuterPosition(self.pos.unwrap_or(Pos2::ZERO) - MARGIN));
         }
         if let Some(since) = intro.handover {
             let there = outer.is_some_and(|o| {
-                (o.min - self.pos.unwrap_or(Pos2::ZERO)).length() < 1.5 && (o.width() - W).abs() < 1.5
+                (o.min + MARGIN - self.pos.unwrap_or(Pos2::ZERO)).length() < 1.5 && (o.width() - WINDOW.x).abs() < 1.5
             });
             if there || since.elapsed() > Duration::from_millis(400) {
                 self.intro = None;
@@ -818,7 +868,6 @@ impl Hunt {
         let arrive = spring((t - 0.1) / 0.75);
         let d = (BIG * (0.6 + 0.4 * arrive) * breath) * (1.0 - travel) + H * travel;
         let fade = out((t - 0.05) / 0.35);
-        let rect = Rect::from_center_size(center, Vec2::splat(d));
 
         // its ripple of light, once it's up
         let ring = clamp((t - 0.45) / 0.8);
@@ -826,16 +875,27 @@ impl Hunt {
             let r = BIG / 2.0 * (1.0 + 0.9 * out(ring));
             painter.circle_stroke(start, r, Stroke::new(2.0 * (1.0 - ring) + 0.5, PAPER.gamma_multiply(0.45 * (1.0 - ring))));
         }
-        // its shadow, falling away as it flies down: none left when it lands (the pill has
-        // none, and one going all at once reads as the screen brightening)
-        let lift = 1.0 - in_out(travel / 0.85);
+        // its shadow falls away as it flies down: none left when it lands (the pill has none,
+        // and one going all at once reads as the screen brightening); Clodsire gives way to play
+        let morph = in_out((travel - 0.6) / 0.4);
+        self.draw_flying(ui, &painter, center, d, fade, morph, 1.0 - in_out(travel / 0.85));
+        // and a small ripple where it touches down
+        if landed > 0.0 && landed < 1.0 {
+            painter.circle_stroke(end, H / 2.0 + 14.0 * out(landed),
+                                  Stroke::new(1.5_f32, PAPER.gamma_multiply(0.5 * (1.0 - landed))));
+        }
+    }
+
+    /// The flying circle: Clodsire on it, or play (morph 1), and its shadow (lift 1: high).
+    #[allow(clippy::too_many_arguments)]
+    fn draw_flying(&self, ui: &mut egui::Ui, painter: &egui::Painter, center: Pos2, d: f32, fade: f32, morph: f32,
+                   lift: f32) {
+        let rect = Rect::from_center_size(center, Vec2::splat(d));
         let shadow = egui::Shadow { offset: [0, (14.0 * lift) as i8], blur: (16.0 + 40.0 * lift) as u8, spread: 0,
                                     color: Color32::from_black_alpha((150.0 * fade * lift).round() as u8) };
         painter.add(shadow.as_shape(rect, d / 2.0));
         painter.circle_filled(center, d / 2.0, gray(0x3a).gamma_multiply(fade)); // its hairline
         painter.circle_filled(center, d / 2.0 - 1.0, INK.gamma_multiply(fade));
-        // Clodsire, giving way to the play button as it lands
-        let morph = in_out((travel - 0.6) / 0.4);
         if morph < 1.0 {
             egui::Image::new(egui::include_image!("../../windows/hunt-icon.png"))
                 .tint(Color32::WHITE.gamma_multiply(fade * (1.0 - morph)))
@@ -843,15 +903,10 @@ impl Hunt {
         }
         if morph > 0.0 {
             let r = d / 2.0 * (CONTROL / H);
-            painter.circle_filled(center, r, PAPER.gamma_multiply(morph));
+            painter.circle_filled(center, r, PAPER.gamma_multiply(morph * fade));
             let s = r / (CONTROL / 2.0);
             let pts = [vec2(-3.0, -5.0), vec2(-3.0, 5.0), vec2(5.5, 0.0)].map(|v| center + v * s).to_vec();
-            painter.add(egui::Shape::convex_polygon(pts, INK.gamma_multiply(morph), Stroke::NONE));
-        }
-        // and a small ripple where it touches down
-        if landed > 0.0 && landed < 1.0 {
-            painter.circle_stroke(end, H / 2.0 + 14.0 * out(landed),
-                                  Stroke::new(1.5_f32, PAPER.gamma_multiply(0.5 * (1.0 - landed))));
+            painter.add(egui::Shape::convex_polygon(pts, INK.gamma_multiply(morph * fade), Stroke::NONE));
         }
     }
 
@@ -873,55 +928,120 @@ impl Hunt {
 
     fn draw(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        let light = self.found_now();
-        let c = look(light);
         let r = H / 2.0;
-
-        // opening (after the big Clodsire): it stretches out from play, the rest fades in
-        let t = self.born.get_or_insert_with(Instant::now).elapsed().as_secs_f32();
         let ease = |x: f32| 1.0 - (1.0 - x.clamp(0.0, 1.0)).powi(3);
+        let ease_in = |x: f32| x.clamp(0.0, 1.0).powi(3);
+
+        // lifted while it's dragged: a touch bigger, a shadow under it
+        if self.lifted.is_some_and(|since| {
+            let still = self.moved_at.is_none_or(|m| m.elapsed() > Duration::from_millis(250));
+            !ctx.input(|i| i.pointer.primary_down()) || (since.elapsed() > Duration::from_millis(400) && still)
+        }) {
+            self.lifted = None;
+        }
+        let lift = ease(ctx.animate_bool_with_time(Id::new("lift"), self.lifted.is_some(), 0.18));
+        let s = 1.0 + 0.03 * lift;
+        let middle = vec2(W / 2.0, H / 2.0);
+        ctx.set_transform_layer(ui.layer_id(),
+                                egui::emath::TSTransform::new(MARGIN + middle * (1.0 - s), s)); // M in, and the lift
+
+        // a find: the pill turns white, light ripples off it, and it glows while the battle's held
+        let found = self.found_now();
+        if found && self.found_at.is_none() {
+            self.found_at = Some(Instant::now());
+        } else if !found {
+            self.found_at = None;
+        }
+        let white = ctx.animate_bool_with_time(Id::new("found"), found, 0.45);
+        let c = look_at(white);
+        let light = white > 0.5;
+
+        // opening (after the big Clodsire): it stretches out from play, the rest fades in;
+        // closing: the other way, folding back into play
+        let t = self.born.get_or_insert_with(Instant::now).elapsed().as_secs_f32();
         let spring = |x: f32| {
             let (x, c) = (x.clamp(0.0, 1.0) - 1.0, 1.2);
             1.0 + (c + 1.0) * x * x * x + c * x * x
         };
-        let (grow, reveal) = (spring(t / 0.55).min(1.0), ease((t - 0.3) / 0.45));
-        if reveal < 1.0 {
+        let (grow, mut reveal) = (spring(t / 0.55).min(1.0), ease((t - 0.3) / 0.45));
+        let closing = self.closing.as_ref().map(|c| c.started.elapsed().as_secs_f32());
+        let shut = closing.map_or(0.0, |c| ease_in(c / FOLD)); // its left end sliding over to the right one
+        if let Some(since) = closing {
+            reveal = reveal.min(1.0 - ease(since / 0.15));
+        }
+        if reveal < 1.0 || lift > 0.0 || self.found_at.is_some() {
             ctx.request_repaint();
         }
-        let painter = ui.painter().clone();
+        // (out into the margin too: the glow, the ripples, the lift's shadow)
+        let mut painter = ui.painter().clone();
+        painter.set_clip_rect(Rect::from_min_size(Pos2::ZERO - MARGIN, WINDOW));
 
+        let shape = Rect::from_min_max(pos2((W - H) * shut, 0.0), pos2(H + (W - H) * grow, H));
+        if let Some(since) = closing.filter(|since| *since >= FOLD) {
+            // just the ball at the right end now, going
+            let gone = ease_in((since - FOLD) / VANISH);
+            let (ball, radius) = (pos2(W - r, r), r * (1.0 - gone));
+            painter.circle_filled(ball, radius, c.edge.gamma_multiply(1.0 - gone));
+            painter.circle_filled(ball, (radius - 1.0).max(0.0), c.fill.gamma_multiply(1.0 - gone));
+            return;
+        }
+        if lift > 0.0 {
+            let shadow = egui::Shadow { offset: [0, (6.0 * lift) as i8], blur: 14, spread: 0,
+                                        color: Color32::from_black_alpha((90.0 * lift) as u8) };
+            painter.add(shadow.as_shape(shape, r));
+        }
+        if let Some(e) = self.found_at.map(|f| f.elapsed().as_secs_f32()) {
+            let glow = 0.5 + 0.5 * (e * 2.6).sin();
+            let halo = egui::Shadow { offset: [0, 0], blur: 14, spread: 0,
+                                      color: Color32::from_white_alpha(((40.0 + 50.0 * glow) * white) as u8) };
+            painter.add(halo.as_shape(shape, r));
+            for i in 0..2 {
+                let q = (e - i as f32 * 0.3) / 0.9;
+                if q > 0.0 && q < 1.0 {
+                    painter.rect_stroke(shape.expand(ease(q) * (M - 2.0)), r + ease(q) * (M - 2.0),
+                                        Stroke::new(1.5_f32, PAPER.gamma_multiply(0.6 * (1.0 - q))),
+                                        egui::StrokeKind::Middle);
+                }
+            }
+        }
         // the outline; dragged by anything that isn't a button
-        let shape = Rect::from_min_size(Pos2::ZERO, vec2(H + (W - H) * grow, H));
         painter.rect_filled(shape, r, c.edge); // a hairline around it, for dark games
         painter.rect_filled(shape.shrink(1.0), r - 1.0, c.fill);
         let bg = ui.interact(shape, Id::new("bg"), Sense::click_and_drag());
         if bg.drag_started() {
             ctx.send_viewport_cmd(ViewportCommand::StartDrag);
+            self.lifted = Some(Instant::now());
         }
         if bg.clicked() {
             ctx.memory_mut(|m| m.surrender_focus(Id::new("hook")));
         }
         let cy = H / 2.0;
+        if closing.is_some() {
+            ui.set_opacity(reveal); // play goes with the rest, and nothing's outside the shrinking pill
+            painter = ui.painter().clone();
+            painter.set_clip_rect(shape.shrink(1.0));
+        }
 
         // start / stop; a right click starts Debug mode, and the button turns into a bug while it's on
         let main = pos2(INSET + CONTROL / 2.0, cy);
         let resp = ui.interact(Rect::from_center_size(main, Vec2::splat(CONTROL)), Id::new("main"), Sense::click());
-        painter.circle_filled(main, CONTROL / 2.0, if resp.hovered() { c.dim } else { c.ink });
+        let size = press(&ctx, &resp);
+        painter.circle_filled(main, CONTROL / 2.0 * size, if resp.hovered() { c.dim } else { c.ink });
         if resp.secondary_clicked() {
             self.debug_run();
         }
         let bug = ease(ctx.animate_bool_with_time(Id::new("bug"), self.test, 0.3));
-        let (k, face) = (1.0 - bug, c.fill.gamma_multiply(1.0 - bug)); // play / stop, shrinking away
-        if self.shows_play() {
-            let pts = [vec2(-3.0, -5.0), vec2(-3.0, 5.0), vec2(5.5, 0.0)].map(|v| main + v * k).to_vec();
-            painter.add(egui::Shape::convex_polygon(pts, face, Stroke::NONE));
-        } else {
-            painter.rect_filled(Rect::from_center_size(main, Vec2::splat(8.0 * k)), 1.0, face);
-        }
+        let (k, face) = ((1.0 - bug) * size, c.fill.gamma_multiply(1.0 - bug)); // play / stop, shrinking away
+        // play and stop melt into each other: a triangle's corners slide out to a square's
+        let stop = ease(ctx.animate_bool_with_time(Id::new("stop"), !self.shows_play(), 0.25));
+        let play = [vec2(-3.0, -5.0), vec2(5.5, 0.0), vec2(5.5, 0.0), vec2(-3.0, 5.0)];
+        let square = [vec2(-4.0, -4.0), vec2(4.0, -4.0), vec2(4.0, 4.0), vec2(-4.0, 4.0)];
+        let pts: Vec<Pos2> = (0..4).map(|i| main + (play[i] + (square[i] - play[i]) * stop) * k).collect();
+        painter.add(egui::Shape::convex_polygon(pts, face, Stroke::NONE));
         if bug > 0.0 {
             egui::Image::new(egui::include_image!("../icons/bug.svg"))
                 .tint(c.fill.gamma_multiply(bug))
-                .paint_at(ui, Rect::from_center_size(main, Vec2::splat(15.0 * (0.5 + 0.5 * bug))));
+                .paint_at(ui, Rect::from_center_size(main, Vec2::splat(15.0 * (0.5 + 0.5 * bug) * size)));
         }
         if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
             self.main_button();
@@ -974,14 +1094,15 @@ impl Hunt {
         for (id, at) in [("folder", folder), ("quit", quit)] {
             let resp = ui.interact(Rect::from_center_size(at, Vec2::splat(CONTROL)), Id::new(id), Sense::click());
             let hovered = resp.hovered();
-            painter.circle_filled(at, CONTROL / 2.0, if hovered { c.hover } else { c.boxed });
+            let grown = press(&ctx, &resp);
+            painter.circle_filled(at, CONTROL / 2.0 * grown, if hovered { c.hover } else { c.boxed });
             let tint = if hovered { c.ink } else if light { gray(0x55) } else { gray(0xb4) };
             let icon = match id {
                 "folder" => egui::include_image!("../icons/folder.svg"),
                 _ => egui::include_image!("../icons/x.svg"),
             };
             let size = if id == "quit" { 13.0 } else { 15.0 };
-            egui::Image::new(icon).tint(tint).paint_at(ui, Rect::from_center_size(at, Vec2::splat(size)));
+            egui::Image::new(icon).tint(tint).paint_at(ui, Rect::from_center_size(at, Vec2::splat(size * grown)));
             if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
                 match id {
                     "folder" => open_path(&self.paths.data.to_string_lossy()),
@@ -1032,7 +1153,40 @@ impl Hunt {
 
     fn quit(&mut self, ctx: &egui::Context) {
         self.stop();
+        self.close_with(ctx, false);
+    }
+
+    /// The closing, then the window goes (and the update's installer starts, with
+    /// install). Straight away where there's no see-through window to fly in.
+    fn close_with(&mut self, ctx: &egui::Context, install: bool) {
+        if self.closing.is_some() || self.closed {
+            return;
+        }
+        let animate = self.intro.is_none() && (self.smoke.is_none() || env::args().any(|a| a == "--intro"));
+        if animate {
+            self.closing = Some(Closing { started: Instant::now(), install });
+            ctx.request_repaint();
+        } else {
+            self.finish_close(ctx, install);
+        }
+    }
+
+    fn finish_close(&mut self, ctx: &egui::Context, install: bool) {
+        self.closed = true;
+        if install {
+            self.run_installer();
+        }
         ctx.send_viewport_cmd(ViewportCommand::Close);
+    }
+
+    /// The closing's end: the window goes.
+    fn closing_window(&mut self, ctx: &egui::Context) {
+        let Some(closing) = self.closing.as_ref() else { return };
+        ctx.request_repaint();
+        if closing.started.elapsed().as_secs_f32() >= FOLD + VANISH {
+            let install = closing.install;
+            self.finish_close(ctx, install);
+        }
     }
 }
 
@@ -1068,11 +1222,18 @@ impl eframe::App for Hunt {
                 }
             }
         }
-        if ctx.input(|i| i.viewport().close_requested()) {
+        if ctx.input(|i| i.viewport().close_requested()) && !self.closed {
+            // (Alt+F4, the taskbar's Close): the closing first, then it goes
+            ctx.send_viewport_cmd(ViewportCommand::CancelClose);
             self.stop();
+            self.close_with(ctx, false);
         }
+        // (the pill's drawing moves its layer M in; the opening draws in the window's own terms)
+        ctx.set_transform_layer(egui::LayerId::background(), egui::emath::TSTransform::IDENTITY);
         if self.intro.is_some() {
             self.intro_window(ctx);
+        } else if self.closing.is_some() {
+            self.closing_window(ctx);
         } else {
             self.track_place(ctx);
         }
@@ -1180,16 +1341,17 @@ struct Smoke {
     t0: Instant,
     stage: usize,
     errors: Vec<String>,
+    after: f32, // s: with the opening (--intro), the states come after it, and ✕ closes it at the end
 }
 
 impl Smoke {
     fn new() -> Smoke {
-        Smoke { t0: Instant::now(), stage: 0, errors: Vec::new() }
+        Smoke { t0: Instant::now(), stage: 0, errors: Vec::new(), after: 0.0 }
     }
 
     fn step(&mut self, h: &mut Hunt, ctx: &egui::Context) {
         ctx.request_repaint();
-        let at = self.t0.elapsed().as_secs_f32();
+        let at = self.t0.elapsed().as_secs_f32() - self.after;
         let state = |v: Value| v.as_object().cloned().unwrap_or_default();
         let stages: &[f32] = &[0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 2.4, 3.4, 4.0];
         if self.stage >= stages.len() || at < stages[self.stage] {
@@ -1230,6 +1392,7 @@ impl Smoke {
                 };
                 let _ = fs::write(h.paths.data.join("smoke.txt"), words);
             }
+            _ if self.after > 0.0 && self.errors.is_empty() => h.quit(ctx), // the closing, too
             _ => std::process::exit(if self.errors.is_empty() { 0 } else { 1 }),
         }
         self.stage += 1;
@@ -1266,7 +1429,7 @@ fn main() -> eframe::Result {
     }
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Hunt")
-        .with_inner_size([W, H])
+        .with_inner_size(WINDOW)
         .with_decorations(false)
         .with_transparent(true)
         .with_resizable(false)
@@ -1279,7 +1442,7 @@ fn main() -> eframe::Result {
     if let Some([x, y]) = settings.get("pos").and_then(Value::as_array).map(|a| {
         [a.first().and_then(Value::as_f64).unwrap_or(0.0) as f32, a.get(1).and_then(Value::as_f64).unwrap_or(0.0) as f32]
     }) {
-        viewport = viewport.with_position([x, y]);
+        viewport = viewport.with_position(pos2(x, y) - MARGIN);
     }
     // OpenGL draws it see-through. A PC without it (no graphics driver) gets
     // Direct3D instead, square: Hunt starts again that way (one window per run).
