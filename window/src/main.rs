@@ -1037,7 +1037,7 @@ fn chrono_now() -> String {
 /// through it, at the game under it (Windows 10 2004 and later).
 fn hide_from_screenshots(cc: &eframe::CreationContext) {
     #[cfg(windows)]
-    {
+    if env::var_os("HUNT_CAPTURABLE").is_none() { // (the Windows build's pictures want to see it)
         use raw_window_handle::{HasWindowHandle, RawWindowHandle};
         if let Ok(handle) = cc.window_handle() {
             if let RawWindowHandle::Win32(h) = handle.as_raw() {

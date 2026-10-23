@@ -82,6 +82,7 @@ jobs:
       - name: Hunt.exe's window comes up
         env:
           HUNT_DATA: ${{ runner.temp }}\pill
+          HUNT_CAPTURABLE: "1"  # it hides from screenshots otherwise (the hunter's too)
         run: |
           New-Item -ItemType Directory -Force $env:HUNT_DATA | Out-Null
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
