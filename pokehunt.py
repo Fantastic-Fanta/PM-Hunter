@@ -1743,6 +1743,38 @@ def save_message(t):
 MENU_ITEMS = ("Pokedex", "Party", "Bag", "PokeBoosters", "Save", "Trainer Card", "Codes")
 
 
+MENU_BLUE = (80, 150, 255)  # the MENU tab on the screen's left edge (STORE's green tab under it)
+
+
+def find_menu_tab(img, texts=()):
+    """MENU's tab (x, y) on the screen's left edge, the blue tab right above STORE's
+    green one (with the MENU open both sit right of its panel, which is that blue too).
+    Its word runs sideways, which Windows doesn't read (a Mac does): the word only if
+    the tabs aren't seen."""
+    rgb = load_rgb(img)
+    h = rgb.shape[0]
+    strip = rgb[:, :max(8, int(rgb.shape[1] * 0.15))].astype(int)
+    r, g, b = strip[..., 0], strip[..., 1], strip[..., 2]
+    store = [sl for sl in blobs((g > 160) & (g - r > 60) & (g - b > 50))
+             if sl[0].stop - sl[0].start > max(1.5 * (sl[1].stop - sl[1].start), 0.04 * h)]
+    if store:
+        sl = max(store, key=lambda sl: sl[0].stop - sl[0].start)
+        x0, x1, top = sl[1].start, sl[1].stop, sl[0].start
+        # rows of MENU's blue in STORE's columns (its sideways letters leave its edges blue)
+        blue = (np.abs(strip[:top, x0:x1] - MENU_BLUE) < (45, 45, 40)).all(axis=2).mean(axis=1) > 0.15
+        y = top - 1
+        while y >= 0 and not blue[y] and top - y < 0.03 * h:  # the gap between the two tabs
+            y -= 1
+        bottom = last = y
+        while y >= 0 and (blue[y] or last - y < 0.01 * h):
+            if blue[y]:
+                last = y
+            y -= 1
+        if bottom >= 0 and blue[bottom] and bottom - last > 0.04 * h:
+            return (x0 + x1) / 2, (last + bottom) / 2
+    return next(((x, y) for t, x, y in texts if norm(t) == "menu"), None)
+
+
 def menu_open(texts):
     """The MENU panel is open: two of its labels are read (forgiving a misread)."""
     return sum(any(norm(m) == norm(t) or same_word(m, t) for m in MENU_ITEMS) for t, _, _ in texts) >= 2
@@ -1792,7 +1824,7 @@ def save_game(wait=0.0):
                 remember_menu(img, texts, tab)
                 step, saved_at = "message", time.time()
             elif not menu_open(texts) and time.time() - tab_at > 2:  # (closed: the quick clicks missed)
-                tab = next(((x, y) for t, x, y in texts if norm(t) == "menu"), None)
+                tab = find_menu_tab(img, texts)
                 if tab:
                     trace(f"save: MENU at ({tab[0]:.0f}, {tab[1]:.0f})")
                     click_at(*tab)
@@ -1819,7 +1851,7 @@ def save_game(wait=0.0):
                 step = "save"
         if step == "close":  # the menu panel comes back; its tab closes it
             if menu_open(texts):
-                hit = next(((x, y) for t, x, y in texts if norm(t) == "menu"), None)
+                hit = find_menu_tab(img, texts)
                 if hit:
                     trace("save: closing the menu")
                     click_at(*hit)
@@ -1854,7 +1886,7 @@ def menu_tab(seconds=0.0):
         battle = find_mute(load_rgb(img))
         if battle and not seconds:
             return None
-        tab = None if battle else next(((x, y) for t, x, y in screen_texts(img) if norm(t) == "menu"), None)
+        tab = None if battle else find_menu_tab(img, screen_texts(img))
         if tab or time.time() >= end:
             return tab
         time.sleep(POLL)
@@ -2050,7 +2082,7 @@ def close_bag_only():
             return True
         texts = screen_texts(img)
         close = next(((x, y) for t, x, y in texts if t.lower() == "close"), None)
-        if not close and (clicked or any(norm(t) == "menu" for t, _, _ in texts)):
+        if not close and (clicked or find_menu_tab(img, texts)):
             return True  # (gone after its click: MENU's tab comes back by itself, quick_menu waits for it)
         trace(f"bag: closing: {'Close up' if close else 'Close gone'}, {'MENU' if any(norm(t) == 'menu' for t, _, _ in texts) else 'no MENU'}")
         if close and time.time() - clicked > 1.0:
@@ -2161,7 +2193,8 @@ def close_after_item():
     end = time.time() + 10
     while time.time() < end:
         time.sleep(POLL)
-        texts = screen_texts(grab())
+        img = grab()
+        texts = screen_texts(img)
         msg = next(((x, y) for t, x, y in texts if re.search(r"\bpp\b.*(restored|recovered)|restored", t, re.I)), None)
         close = next(((x, y) for t, x, y in texts if t.lower() == "close"), None)
         if msg:
@@ -2169,7 +2202,7 @@ def close_after_item():
         elif close:
             click_at(*close)
         elif menu_open(texts):
-            tab = next(((x, y) for t, x, y in texts if norm(t) == "menu"), None)
+            tab = find_menu_tab(img, texts)
             if tab:
                 click_at(*tab)
         else:
@@ -2179,13 +2212,14 @@ def close_after_item():
 def clear_leftovers():
     """Closes a save message or menu panel left open; no encounters come
     while either is up. True if it found something to close."""
-    texts = screen_texts(grab())
+    img = grab()
+    texts = screen_texts(img)
     msg = next(((x, y) for t, x, y in texts if save_message(t)), None)
     if msg:
         click_at(*msg)
         return True
     if menu_open(texts):
-        tab = next(((x, y) for t, x, y in texts if norm(t) == "menu"), None)
+        tab = find_menu_tab(img, texts)
         if tab:
             click_at(*tab)
             return True
