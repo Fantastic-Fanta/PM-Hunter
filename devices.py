@@ -138,12 +138,13 @@ class Desktop:
             self.grab()
         return self.scale
 
-    def click(self, x, y):
+    def click(self, x, y, right=False):
         # Roblox reads input once a frame and only clicks a button it already
         # sees the mouse over, so: arrive, nudge, let it notice, press, hold,
-        # and stay a moment after letting go.
+        # and stay a moment after letting go. right: the right button (the
+        # bag's favorite).
         if WINDOWS:
-            _win_click(x, y)
+            _win_click(x, y, right)
             return
         s = self._s()
         pg = _pyautogui()
@@ -151,7 +152,8 @@ class Desktop:
         time.sleep(0.05)
         pg.moveTo(x / s, y / s)
         time.sleep(0.12)
-        pg.mouseDown(); time.sleep(0.08); pg.mouseUp()
+        button = "right" if right else "left"
+        pg.mouseDown(button=button); time.sleep(0.08); pg.mouseUp(button=button)
         time.sleep(0.1)
 
     def move(self, x, y):
@@ -271,7 +273,7 @@ if WINDOWS:
     class _INPUT(ctypes.Structure):
         _fields_ = [("type", wintypes.DWORD), ("u", _INPUTUNION)]
 
-    _MOVE, _LEFTDOWN, _LEFTUP, _ABSOLUTE = 0x0001, 0x0002, 0x0004, 0x8000
+    _MOVE, _LEFTDOWN, _LEFTUP, _RIGHTDOWN, _RIGHTUP, _ABSOLUTE = 0x0001, 0x0002, 0x0004, 0x0008, 0x0010, 0x8000
     _KEYUP, _UNICODE = 0x0002, 0x0004
 
 
@@ -318,7 +320,7 @@ def _win_check_corner():
         raise FailSafeException("mouse in a screen corner")
 
 
-def _win_click(x, y):
+def _win_click(x, y, right=False):
     _win_check_corner()
     _win_move_to(x - 3, y)
     time.sleep(0.05)
@@ -328,9 +330,9 @@ def _win_click(x, y):
     _win_nudge(1, 0)
     _win_nudge(-1, 0)
     time.sleep(0.12)
-    _send(_mouse(_LEFTDOWN))
+    _send(_mouse(_RIGHTDOWN if right else _LEFTDOWN))
     time.sleep(0.08)
-    _send(_mouse(_LEFTUP))
+    _send(_mouse(_RIGHTUP if right else _LEFTUP))
     time.sleep(0.1)
 
 

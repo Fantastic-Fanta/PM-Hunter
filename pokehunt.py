@@ -251,6 +251,19 @@ def chat_showing(rgb, lay):
     return p.size > 0 and (p.max(axis=2) > 90).mean() > 0.003
 
 
+def chat_open(rgb):
+    """Roblox's chat window is open: its button's bubble is filled white (just an
+    outline while it's closed). None when the button isn't found. As
+    Vision.chatOpen on Android."""
+    hit = find_chat_button(rgb)
+    if not hit:
+        return None
+    x, y = hit
+    r = max(4, int(rgb.shape[0] * 0.011))
+    bubble = rgb[max(int(y) - r, 0):int(y) + r, max(int(x) - r, 0):int(x) + r]
+    return bool(bubble.size) and (bubble.min(axis=2) > 200).mean() > 0.4
+
+
 def find_chat_button(rgb):
     """Roblox's chat button: the right end of the dark gray pill (menu, chat)
     in the top-left corner, or None. Roblox draws it by its window, not by the
@@ -645,18 +658,19 @@ def keep_roblox_in_front():
 
 
 last_click = [time.time()]
-test_catch = [0]  # encounters still to catch for practice: --practice, or the window's Debug mode
-fit_next = [False]  # the window's Debug mode: the layout fitted again (and drawn) at the next encounter
+test_catch = [0]  # encounters still to catch for practice (--practice)
+debug_run = [False]  # the window's Debug mode: debug_workflow() on the next encounter
+fit_next = [False]  # with it: the layout fitted again (and drawn) at that encounter
 AFK_EVERY = 15 * 60  # Roblox kicks after 20 min without input
 
 
-def click_at(x, y):
+def click_at(x, y, right=False):
     keep_roblox_in_front()
     last_click[0] = time.time()
-    debuglog.debug.note(f"    click ({x:.0f}, {y:.0f})")
+    debuglog.debug.note(f"    {'right ' if right else ''}click ({x:.0f}, {y:.0f})")
     if debuglog.debug.click_shot():  # see where the first clicks land
         debuglog.debug.shot(f"click #{debuglog.debug.clicks} at ({x:.0f}, {y:.0f})", click_closeup(grab(), x, y))
-    dev.click(x, y)
+    dev.click(x, y, right=right)
 
 
 def click_closeup(img, x, y):
@@ -777,7 +791,7 @@ def publish():
         remote.show("@state " + json.dumps({
             "running": running.is_set(), "remote": web.remote, "count": web.encounters,
             "phase": web.phase, "wanted": web.wanted, "enc": title(enc) if enc else "",
-            "test": test_catch[0] > 0}))
+            "test": debug_run[0] or test_catch[0] > 0}))
 
 
 def window_buttons():
@@ -790,10 +804,8 @@ def window_buttons():
             if cmd == "toggle":
                 toggle()
             elif cmd in ("test on", "test off"):
-                on = cmd == "test on"
-                test_catch[0], fit_next[0] = int(on), on
-                say("  (Debug mode: the layout fitted and the next encounter caught)" if test_catch[0]
-                    else "  (Debug mode off)")
+                debug_run[0] = fit_next[0] = cmd == "test on"
+                say("  (Debug mode: a debug run on the next encounter)" if debug_run[0] else "  (Debug mode off)")
                 publish()
             elif cmd in ("code", "logout"):
                 website_key(devices.N_KEYCODE if cmd == "code" else devices.L_KEYCODE)
@@ -1123,11 +1135,14 @@ def read_encounter(hint, clicks=False, draw=False):
         if clicks:
             keep_roblox_in_front()  # a popup may be covering the enemy's box
         menu = menu_ready(rgb, lay)
-        chat = chat_showing(rgb, lay)
-        # The chat button toggles, so give up after two clicks rather than
-        # flip it open and shut for good if something else looks like chat.
-        if chat and clicks and time.time() - chat_click > 5 and chat_clicks < 2:
-            say("  closing the chat, it covers the enemy's box")
+        chat = chat_showing(rgb, lay)  # its lines over the game
+        is_open = chat_open(rgb)
+        # Its button says whether chat's open (filled) or not (an outline): closed
+        # till it says so. Without the button only guessed at from chat lines,
+        # and two clicks at most then (it toggles: one more could open it again).
+        if clicks and (time.time() - chat_click > 2.5 and chat_clicks < 4 if is_open else
+                       is_open is None and chat and time.time() - chat_click > 5 and chat_clicks < 2):
+            say("  closing the chat" + (", it covers the enemy's box" if chat else ""))
             click_at(*(find_chat_button(rgb) or lay.pt(*CHAT_BUTTON)))
             move_mouse(*lay.pt(*IDLE_SPOT))
             chat_click, chat_clicks = time.time(), chat_clicks + 1
@@ -1418,9 +1433,15 @@ def use_item(lay, tab, item, target=None, prefer=None, in_battle=True):
                 trace(f"bag: {shown} is selected, not {item}: picking it again")
                 step = "item"
         elif step == "target":
-            if any(t.lower().startswith("choose a pokemon") for t, _, _ in texts):
-                hit = next(((x, y) for t, x, y in texts if same_word(target, t)), None)
+            # in battle "Choose a Pokemon"; outside one the Pokemon Party screen, "Select a
+            # pokemon to heal with a Full Restore", its cards named "Clodsire - Lv. 109"
+            if any(t.lower().startswith(("choose a pokemon", "select a pokemon", "pokemon party"))
+                   for t, _, _ in texts):
+                hit = next(((x, y) for t, x, y in texts
+                            if same_word(target, t) or same_word(target, re.split(r"\s+-\s+|\s+lv", t, flags=re.I)[0])),
+                           None)
                 if hit:
+                    trace(f"bag: {item} on {target}")
                     click_at(*hit)
                     return item
     say(f"  (couldn't use {item}: {snapshot(img, 'bag')}, text read: "
@@ -1716,18 +1737,16 @@ def need_pp(lead, move, plan):
               "(the game takes it only outside battles)", flush=True)
 
 
-def restore_pp(plan, lay):
-    """MENU -> Bag -> Recovers -> the PP item -> Use -> the Pokemon, between
-    encounters, then the bag and the menu closed again. lay: the last
-    battle's, for where the bag's parts are. True once used."""
+def open_bag(why):
+    """MENU -> Bag, between encounters. True once Bag's clicked (the bag's on its way)."""
     img = grab()
     texts = screen_texts(img)
     tab = next(((x, y) for t, x, y in texts if norm(t) == "menu"), None)
     if not tab or find_mute(load_rgb(img)):
         return False
-    trace(f"pp: MENU at ({tab[0]:.0f}, {tab[1]:.0f})")
+    trace(f"{why}: MENU at ({tab[0]:.0f}, {tab[1]:.0f})")
     click_at(*tab)
-    tries, end = 0, time.time() + 8
+    end = time.time() + 8
     while time.time() < end:
         time.sleep(0.4)
         img = grab()
@@ -1736,16 +1755,174 @@ def restore_pp(plan, lay):
             return False  # an encounter came first
         hit = next(((x, y) for t, x, y in texts if norm(t) == "bag"), None)
         if hit and menu_open(texts):
-            at = menu_button(hit, texts, retry=tries > 0)
-            trace(f"pp: clicking Bag at ({at[0]:.0f}, {at[1]:.0f})")
+            at = menu_button(hit, texts, retry=False)
+            trace(f"{why}: clicking Bag at ({at[0]:.0f}, {at[1]:.0f})")
             click_at(*at)
-            tries += 1
-            used = use_item(lay, "Recovers", plan["pp_item"], pp_for[0], in_battle=False)
-            close_after_item()
-            return bool(used)
-    say(f"  (couldn't open the Bag from the MENU: {snapshot(img, 'pp-menu')})")
+            return True
+    say(f"  (couldn't open the Bag from the MENU: {snapshot(img, why + '-menu')})")
     clear_leftovers()
     return False
+
+
+def restore_pp(plan, lay):
+    """MENU -> Bag -> Recovers -> the PP item -> Use -> the Pokemon, between
+    encounters, then the bag and the menu closed again. lay: the last
+    battle's, for where the bag's parts are. True once used."""
+    if not open_bag("pp"):
+        return False
+    used = use_item(lay, "Recovers", plan["pp_item"], pp_for[0], in_battle=False)
+    close_after_item()
+    return bool(used)
+
+
+def favorite_in_bag(lay, tab, items):
+    """The bag's open: tab's items favorited (a right click on one that isn't;
+    favorites sit at the top). {item: "already", "now", or why not}."""
+    split = lay.pt(BAG_SPLIT, 0)[0]
+    v = lay.s * lay.fit[1]
+    done, tabbed, searched, clicked, end = {}, False, set(), set(), time.time() + 20
+    while time.time() < end and len(done) < len(items):
+        time.sleep(0.5)
+        img = grab()
+        rgb, texts = load_rgb(img), screen_texts(img)
+        if not tabbed:
+            hit = find_tab(texts, tab, split, img.width)
+            if hit:
+                click_at(*hit)
+                tabbed = True
+            continue
+        for item in items:
+            if item in done:
+                continue
+            rows = sorted((y, x) for t, x, y in texts if norm(t) == norm(item) and x < split)
+            if not rows:
+                box = search_box(texts, split, v)
+                if item not in searched and box:  # not near the top: not a favorite; searched for
+                    click_at(*box)
+                    dev.type(item, erase=25)
+                    searched.add(item)
+                elif item in searched and box and time.time() > end - 8:
+                    done[item] = "not in the bag"
+                break
+            y, x = rows[0]
+            if favorited(rgb, texts, y, lay):
+                done[item] = "now" if item in clicked else "already"
+                if item in searched:
+                    box = search_box(texts, split, v)
+                    if box:  # the search box emptied again, for the next one
+                        click_at(*box)
+                        dev.type("", erase=25)
+                continue
+            if item in clicked and time.time() > end - 6:  # clicked, and still not one
+                done[item] = "a right click didn't favorite it"
+                continue
+            trace(f"bag: favoriting {item} (a right click)")
+            click_at(x, y, right=True)
+            clicked.add(item)
+            time.sleep(0.8)
+            break
+    for item in items:
+        done.setdefault(item, "didn't get to it")
+    return done
+
+
+def item_said(seconds=2.0):
+    """What the game said after an item outside battle ("... HP was restored",
+    "It won't have any effect"), or ""."""
+    end = time.time() + seconds
+    while time.time() < end:
+        time.sleep(0.4)
+        for t, x, y in screen_texts(grab()):
+            if re.search(r"restored|recovered|effect|healed|was used", t, re.I):
+                return t
+    return ""
+
+
+def debug_workflow(cfg, enc, img, lay):
+    """The window's Debug mode (a right click on play), on one encounter: a
+    Quick Ball (and Yawn, when the lead is the Yawn user and it wasn't caught),
+    then away; MENU > Bag > Recovers: the heal and PP items favorited if they
+    aren't (a right click), each used once outside battle (the Pokemon Party
+    screen); the bag closed; MENU > Save, its message clicked away. Each step to
+    the debug channel, a picture with any that went wrong, a summary at the end."""
+    plan = cfg["catch"]
+    steps = []
+
+    def step(name, ok, detail="", picture=None):
+        steps.append((name, ok, detail))
+        print(f"  debug: {name}: {'ok' if ok else 'FAILED'}" + (f" ({detail})" if detail else ""), flush=True)
+        if not ok:
+            debuglog.debug.shot(f"debug run: {name} went wrong" + (f" ({detail})" if detail else ""),
+                                picture or grab())
+
+    m = re.search(r"should (.+?) do", region_text(img, lay, MSG))
+    lead = m.group(1) if m else ""
+    target = lead or plan.get("sleep_with", "")
+    print(f"  debug run on {title(enc)}, {lead or '?'} leading", flush=True)
+    debuglog.debug.shot(f"debug run: {describe(enc)}, {lead or '?'} leading", game_shot(img, lay))
+    step("reading the battle", bool(enc["species"]), describe(enc), game_shot(img, lay))
+
+    # the battle: a Quick Ball; Yawn too with the Yawn user, if it's still there; then away
+    ball = plan.get("first_ball") or "Quick Ball"
+    try:
+        used = use_item(lay, "Pokeballs", ball)
+        step(f"throwing a {ball}", bool(used))
+        outcome = "turn"
+        if used:
+            outcome, img, rgb, lay, msgs = wait_turn(lay)
+            step(f"the {ball}'s turn", outcome in ("caught", "turn", "over"),
+                 f"{outcome}" + (f": {' / '.join(msgs)}"[:250] if msgs else ""))
+        if outcome == "turn" and same_word(plan.get("sleep_with", ""), lead):
+            move = plan.get("sleep_move", "Yawn")
+            said = use_move(lay, move)
+            step(move, said == "used", said)
+            if said == "used":
+                outcome, img, rgb, lay, msgs = wait_turn(lay)
+                step(f"{move}'s turn", outcome in ("caught", "turn", "over"),
+                     f"{outcome}" + (f": {' / '.join(msgs)}"[:250] if msgs else ""))
+        if outcome == "turn":
+            step("running", run_away(lay))
+    except BattleOver:
+        step("the battle", True, "it ended")
+    end = time.time() + 10  # out of the battle for good before the MENU
+    while time.time() < end and find_mute(load_rgb(grab()), lay.mute):
+        time.sleep(0.5)
+
+    # the bag from the MENU: favorites, then each item once
+    heal, pp = plan["heal_item"], plan["pp_item"]
+    for i, item in enumerate((heal, pp)):
+        opened = open_bag("debug")
+        step(f"MENU > Bag (for the {item})", opened)
+        if not opened:
+            break
+        if i == 0:
+            favorites = favorite_in_bag(lay, "Recovers", (heal, pp))
+            for name, how in favorites.items():
+                step(f"{name} favorited", how in ("already", "now"), how)
+        used = use_item(lay, "Recovers", item, target, in_battle=False)
+        said = item_said() if used else ""
+        step(f"a {item} on {target or '?'}", bool(used), said)
+        close_after_item()  # its message, the bag, the MENU
+
+    # MENU > Save (after a wait, if the game says to); the message clicked away
+    saved = save_game()
+    if not saved and save_wait[0]:
+        wait, save_wait[0] = min(save_wait[0] + 2, 125), 0
+        print(f"  debug: the game says to wait {wait} s before saving", flush=True)
+        time.sleep(wait)
+        saved = save_game()
+    step("saving", saved)
+    click_at(*lay.pt(*AFK_SPOT))  # the air: nothing left open
+
+    bad = [s for s in steps if not s[1]]
+    summary = (f"debug run: all {len(steps)} steps went right" if not bad else
+               f"debug run: {len(bad)} of {len(steps)} steps went wrong: " +
+               "; ".join(f"{n} ({d})" if d else n for n, _, d in bad))
+    print("  " + summary, flush=True)
+    debuglog.debug.flush()
+    debuglog.debug.post(summary + "\n" + "\n".join(
+        f"{'✓' if ok else '✗'} {n}" + (f": {d}" if d else "") for n, ok, d in steps)[:1900])
+    return not bad
 
 
 def close_after_item():
@@ -1994,13 +2171,16 @@ def hunt(cfg, args):
             if not again:
                 log_encounter(enc, "seen")
             wait_gone(lay)
+        elif debug_run[0]:
+            debug_workflow(cfg, enc, img, lay)
+            debug_run[0] = False
+            publish()  # the window's Debug mode turns off
+            last_save = time.time()  # it saved
         else:
             practice = test_catch[0] > 0
             if practice or wanted(enc, notify):  # worth catching, not stopping
                 test_catch[0] -= practice
-                publish()  # the window's Debug mode turns off
-                result, details = catch(enc, img, lay, cfg["catch"], first_ball=not practice,
-                                        debug=args.debug or practice)  # the window's Debug mode: screenshots
+                result, details = catch(enc, img, lay, cfg["catch"], first_ball=not practice, debug=args.debug)
                 if result == "taken over":
                     continue  # read again: the website battles it
                 print(f"  catch: {result} ({details})", flush=True)

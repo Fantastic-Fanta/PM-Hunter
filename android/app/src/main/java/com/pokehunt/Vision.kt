@@ -262,6 +262,17 @@ object Vision {
     /** Roblox's chat button: the right end of the dark pill (menu, chat) in
      *  the top-left corner. Roblox opens its chat window when messages come in,
      *  and on a phone it covers the game; this button closes it. */
+    /** Roblox's chat window is open: its button's bubble is filled white (just an
+     *  outline while it's closed). Null when the button isn't found. As
+     *  pokehunt.py's chat_open. */
+    fun chatOpen(f: Frame): Boolean? {
+        val at = chatButton(f) ?: return null
+        val r = max(4, (f.height * 0.011).toInt())
+        val bubble = Box((at.x - r).toInt().coerceAtLeast(0), (at.y - r).toInt().coerceAtLeast(0),
+                         (at.x + r).toInt(), (at.y + r).toInt())
+        return bubble.w > 0 && bubble.h > 0 && f.share(bubble) { i -> min(f.r(i), min(f.g(i), f.b(i))) > 200 } > 0.4
+    }
+
     fun chatButton(f: Frame): Pt? {
         val area = Box(0, 0, (f.width * 0.3).toInt(), (f.height * 0.15).toInt())
         val pill = f.mask(area) { i ->

@@ -379,7 +379,7 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
             val readable = menu && !chat && Vision.boxVisible(f, lay)
             // the chat window over the enemy's box: close it (reading the screen is slow, so only then)
             if (!readable && menu && now() - start > 2 && !watch && now() - chatClosedAt > 3 &&
-                closeChat(f, screenTexts(f))) continue
+                closeChat(f) { screenTexts(f) }) continue
             // first encounter on this screen, or it can't be read: fit the layout again
             if (now() - calAt > 2 && (!calSaved || calibrateNext || (!readable && now() - start > 3))) {
                 calAt = now()
@@ -447,8 +447,13 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
     /** Roblox opens its chat window when messages come in, and on a phone it
      *  covers the game (the bag's list, the enemy's box). Closes it with
      *  Roblox's chat button. True if it tapped. */
-    private fun closeChat(f: Frame, texts: List<TextHit>): Boolean {
-        if (texts.none { "tap here to chat" in it.text.lowercase() } || now() - chatClosedAt < 3) return false
+    private fun closeChat(f: Frame, texts: List<TextHit>): Boolean = closeChat(f) { texts }
+
+    private fun closeChat(f: Frame, texts: () -> List<TextHit>): Boolean {
+        if (now() - chatClosedAt < 3) return false
+        // its button says whether it's open (filled) or not (an outline); without it, its words
+        val open = Vision.chatOpen(f) ?: texts().any { "tap here to chat" in it.text.lowercase() }
+        if (!open) return false
         chatClosedAt = now()
         val button = Vision.chatButton(f)
         if (button == null) {
