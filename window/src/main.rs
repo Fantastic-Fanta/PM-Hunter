@@ -261,6 +261,7 @@ struct Hunt {
     installer: Option<PathBuf>,
     install_when_stopped: bool,
     install_when_paused: bool,
+    downloading: bool, // an update's on its way down
     stopped_by_you: bool, // stop pressed: once it's paused, a look for a new build
 
     pos: Option<Pos2>,
@@ -331,6 +332,7 @@ impl Hunt {
             installer: None,
             install_when_stopped: false,
             install_when_paused: false,
+            downloading: false,
             stopped_by_you: false,
             pos,
             pos_saved: pos,
@@ -350,7 +352,7 @@ impl Hunt {
             paths,
         };
         hunt.hook = hunt.hook_saved();
-        hunt.check_update();
+        hunt.look_for_update(true);
         if let (Some(smoke), true) = (hunt.smoke.as_mut(), hunt.intro.is_some()) {
             smoke.after = INTRO_END + 0.8;
         }
@@ -531,8 +533,10 @@ impl Hunt {
         if !hunting && std::mem::take(&mut self.stopped_by_you) {
             self.check_update();
         }
-        if !hunting && self.install_when_paused {
+        if !hunting && self.install_when_paused && self.was_found.is_empty() {
+            // (not with a find held on screen for you: Hunt stays, keeping Roblox awake)
             self.install_when_paused = false;
+            self.note = "Installing".into();
             self.install_when_stopped = true;
             self.stop(); // ended() installs, once the hunter is gone
         }
@@ -662,11 +666,17 @@ impl Hunt {
     /// When Hunt opens and whenever a hunt stops: a newer build on the website?
     /// It's downloaded, installed, and Hunt starts again (the installer starts it).
     fn check_update(&self) {
+        self.look_for_update(false);
+    }
+
+    /// A look at the website for a newer build (Msg::Update), and with every, one each
+    /// 30 minutes after it while Hunt's open (a hunt can go on for days).
+    fn look_for_update(&self, every: bool) {
         if version() == 0 {
             return; // a build of one's own
         }
         let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
-        thread::spawn(move || {
+        thread::spawn(move || loop {
             let info = ureq::get(&format!("{}/windows.json", site()))
                 .set("User-Agent", &format!("Hunt (windows, {})", name()))
                 .timeout(Duration::from_secs(15))
@@ -680,17 +690,26 @@ impl Hunt {
                     ctx.request_repaint();
                 }
             }
+            if !every {
+                return;
+            }
+            thread::sleep(Duration::from_secs(30 * 60));
         });
     }
 
-    /// A newer build: downloaded and installed while it isn't hunting
-    /// (if a hunt started meanwhile, once it stops).
+    /// A newer build: downloaded at once (the hunter's always there, paused from when
+    /// Hunt opens, so not waiting for it to be gone), and installed once a hunt isn't
+    /// on (as it's downloaded, or when it stops); while hunting it's quiet about it,
+    /// the website code stays in the pill.
     fn download_update(&mut self) {
         let Some(info) = self.update.clone() else { return };
-        if !self.note.is_empty() || self.installer.is_some() {
+        if self.downloading || self.installer.is_some() {
             return; // on its way
         }
-        self.note = "Downloading".into();
+        self.downloading = true;
+        if !self.hunting() {
+            self.note = "Downloading".into();
+        }
         let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
         thread::spawn(move || {
             let result = (|| -> Result<PathBuf, String> {
@@ -1193,24 +1212,30 @@ impl eframe::App for Hunt {
                 Msg::Line(..) | Msg::Ended(..) => {}
                 Msg::Update(info) => {
                     self.update = Some(info);
-                    if !self.running() {
-                        self.download_update();
+                    self.download_update();
+                }
+                Msg::Progress(p) => {
+                    if !self.hunting() {
+                        self.note = p;
                     }
                 }
-                Msg::Progress(p) => self.note = p,
                 Msg::UpdateFailed(e) => {
                     self.say(&format!("the update didn't download: {e}"));
                     self.note.clear();
+                    self.downloading = false; // (the next look tries again)
                 }
                 Msg::Downloaded(path) => {
                     self.installer = Some(path);
-                    self.note = "Installing".into();
+                    self.downloading = false;
                     if self.hunting() {
-                        self.install_when_paused = true; // once you stop it
+                        self.note.clear();
+                        self.install_when_paused = true; // once it stops (you, a find, Ctrl+Shift+H)
                     } else if self.proc.is_some() {
+                        self.note = "Installing".into();
                         self.install_when_stopped = true;
                         self.stop(); // ended() installs, once the hunter is gone
                     } else {
+                        self.note = "Installing".into();
                         self.install();
                     }
                 }

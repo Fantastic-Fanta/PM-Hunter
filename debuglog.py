@@ -33,7 +33,11 @@ class Debug:
     def __init__(self):
         self.url = ""
         self.run = uuid.uuid4().hex[:4]  # tells runs apart in the channel
-        self.who = f"{platform.system()} {platform.release()} · run {self.run}"
+        try:  # the build ("23 Oct 17:53"): written by the Windows build, so a PC's updates show
+            from build_info import NAME as build
+        except ImportError:
+            build = "own build"
+        self.who = f"{platform.system()} {platform.release()} · {build} · run {self.run}"
         self.lines = []
         self.lock = threading.Lock()
         self.shots = 0
