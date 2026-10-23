@@ -64,6 +64,14 @@ jobs:
           HUNT_DATA: ${{ runner.temp }}\hunt
         run: dist\Hunt\hunt-engine.exe --diagnose --config config.example.json
 
+      - name: Hunt.exe's window comes up
+        env:
+          HUNT_DATA: ${{ runner.temp }}\hunt
+        run: |
+          $p = Start-Process dist\Hunt\Hunt.exe -ArgumentList --smoke -PassThru -Wait
+          Get-Content "$env:HUNT_DATA\smoke.txt"
+          exit $p.ExitCode
+
       - name: HuntSetup.exe
         env:
           NAME: ${{ inputs.name || 'test' }}

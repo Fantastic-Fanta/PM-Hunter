@@ -24,22 +24,25 @@ open it, and Hunt is in the Start menu and on the desktop (no admin, no
 Python). Windows warns about it at first ("Windows protected your PC": **More
 info > Run anyway**) because the installer isn't signed.
 
-The window (`app.py`, Hunt.exe) has **Start hunting** / **Pause** / **Stop**,
-**Watch only**, the website code, **What to hunt** (config.json, checked
-before it's saved, with the Discord webhook in a box of its own), **Finds**,
-and under **More**: Check this PC, Test catching, fit the layout again, and
-**Send problem reports**. The hunter itself is pokehunt.py
+The window (`app.py`, Hunt.exe) is a pill with no frame, dragged by its
+words: what it's doing, the website code (click it for the website), start /
+pause, stop, and **•••** for everything else: **What to hunt** (config.json,
+checked before it's saved, with the Discord webhook in a box of its own),
+**Finds**, **Watch only**, the log, Check this PC, Test catching, fit the
+layout again, **Send problem reports** and Close. A find turns it white. The
+hunter itself is pokehunt.py
 (hunt-engine.exe), run by the window with `--window`. What a PC keeps
 (config.json, finds, calibration, the website key) is in `%LOCALAPPDATA%\Hunt`.
 Hunt checks https://poopihunt.xyz/windows.json when it starts (and every 6
-hours) and offers **Update now**, which installs the new build and restarts.
+hours); a newer build puts **Update Hunt** at the top of **•••**, which
+installs it and restarts.
 
 `./publish-windows.sh` builds it on GitHub (`.github/workflows/windows.yml`:
 PyInstaller with `windows/hunt.spec`, Inno Setup with `windows/hunt.iss`,
 Python 3.12) and publishes it; GitHub builds what's pushed, so push first.
 The build also reads the samples with Windows' OCR (the "read like on the
 Mac" line). Pushes build it too, as a check. On a Mac, `python app.py` opens
-the same window.
+the same pill (with dark corners there: Tk on a Mac won't make them clear).
 
 Published builds report what they print, their errors, and screenshots of
 calibration, trouble, finds and the first 10 clicks to the Windows debug
