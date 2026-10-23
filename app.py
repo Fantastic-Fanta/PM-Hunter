@@ -49,6 +49,7 @@ except ImportError:
 # black on white, and greys
 INK, PAPER, GREY, LINE, SOFT = "#111111", "#ffffff", "#8a8a8a", "#e4e4e4", "#f4f4f4"
 FONT = "Segoe UI" if WINDOWS else "Helvetica Neue"
+WEBHOOK = r"https://((ptb|canary)\.)?discord(app)?\.com/api/webhooks/\d+/\S+$"
 MONO = "Consolas" if WINDOWS else "Menlo"
 KEY = "#ff00fe"  # on Windows the window is see-through where it's this color: all but the pill
 
@@ -122,7 +123,7 @@ class Hunt:
         # a pill with no frame: the window's own color is see-through around it
         root.overrideredirect(True)
         u = self.u = max(1.0, root.winfo_fpixels("1i") / 96)  # Windows' display scaling
-        self.W, self.H = round(240 * u), round(52 * u)
+        self.W, self.H = round(360 * u), round(52 * u)
         if WINDOWS:
             clear = KEY
             root.attributes("-transparentcolor", KEY)
@@ -132,7 +133,19 @@ class Hunt:
         root.configure(bg=clear)
         c = self.canvas = tk.Canvas(root, width=self.W, height=self.H, bg=clear, highlightthickness=0, bd=0)
         c.pack()
-        self.font = tkfont.Font(family=FONT, size=11, weight="bold")
+        self.font = tkfont.Font(family=MONO, size=11, weight="bold")
+        self.hook, self.hook_open = self.hook_saved(), False
+        self.hook_var = tk.StringVar()
+        self.hook_box = tk.Entry(c, textvariable=self.hook_var, font=(FONT, 10), relief="flat", bd=0,
+                                 highlightthickness=0)
+        self.hook_box.bind("<FocusIn>", self.hook_in)
+        self.hook_box.bind("<Button-1>", lambda e: self.hook_box.focus_force())
+        self.hook_box.bind("<FocusOut>", self.hook_out)
+        self.hook_box.bind("<Return>", lambda e: self.canvas.focus_set())
+        self.hook_box.bind("<Escape>", lambda e: (self.hook_var.set(self.hook), self.canvas.focus_set()))
+        self.hook_box.bind("<Button-3>", self.hook_paste)  # right click pastes
+        self.hook_box.bind("<Button-2>", self.hook_paste)  # (a Mac's right click)
+        self.hook_var.set("Webhook on" if self.hook else "Discord webhook")
         sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
         x, y = self.settings.get("pos") or (0, -1)
         if not (0 <= x <= sw - self.W // 2 and 0 <= y <= sh - self.H):
@@ -140,11 +153,12 @@ class Hunt:
         root.geometry(f"{self.W}x{self.H}+{x}+{y}")
 
         self.hover = None
-        actions = {"main": self.main, "more": self.more}
+        actions = {"main": self.main, "more": self.more, "code": self.open_site}
         for tag, action in actions.items():
             c.tag_bind(tag, "<Enter>", lambda e, t=tag: self.hovering(t))
             c.tag_bind(tag, "<Leave>", lambda e: self.hovering(None))
             c.tag_bind(tag, "<Button-1>", lambda e, a=action: a())
+        c.bind("<Button-1>", lambda e: c.focus_set(), add="+")  # a click off the webhook box leaves it
         c.tag_bind("drag", "<ButtonPress-1>", self.drag_start)
         c.tag_bind("drag", "<B1-Motion>", self.drag)
         c.tag_bind("drag", "<ButtonRelease-1>", self.drag_end)
@@ -152,11 +166,9 @@ class Hunt:
         self.watch = tk.BooleanVar(value=False)
         self.reports = tk.BooleanVar(value=self.settings.get("reports", True))
         menu = tk.Menu(root, tearoff=0)
-        menu.add_command(label="Stop", command=self.stop)
         menu.add_checkbutton(label="Watch only (never clicks)", variable=self.watch)
         menu.add_command(label="Finds", command=lambda: self.open_folder("finds"))
         menu.add_separator()
-        menu.add_command(label="Website code", command=lambda: webbrowser.open(SITE + "/app"))
         menu.add_command(label="New website code", command=lambda: self.send("code"))
         menu.add_command(label="Log out every browser", command=self.log_out_browsers)
         menu.add_separator()
@@ -223,45 +235,28 @@ class Hunt:
             subprocess.Popen(["open", path])
 
     def show_state(self):
-        """The pill: a dot (filled while it hunts, a ring while it doesn't, grey
-        while it gets going), the encounters so far, and start / pause. A find
-        turns it white, with the name."""
+        """The pill: start / stop, the website code (or a word: Done, Stopped,
+        an update's progress), the webhook box. A find turns it white."""
         running = self.proc is not None
         s, mode = self.state, self.mode
         self.found_now = bool(running and s.get("phase") == "battle" and s.get("wanted") and not s.get("remote"))
-        if not running:
-            self.dot, text = "ring", (self.last_exit or "")
-        elif mode == "diagnose" or not s:
-            self.dot, text = "dim", "Checking" if mode == "diagnose" else ""
-        elif self.found_now:
-            self.dot, text = "full", s.get("enc", "")
-        elif s.get("remote"):
-            self.dot, text = "dim", "Website"
-        else:
-            self.dot, text = "full" if s.get("running") else "ring", str(s.get("count", 0))
-        self.text = self.note or text
-
-        if not running:
-            self.main_icon, self.main_enabled = "play", True
-        elif mode == "diagnose":
-            self.main_icon, self.main_enabled = "play", False
-        elif s.get("running") or s.get("remote") or not s:
-            self.main_icon, self.main_enabled = "pause", bool(s) and not s.get("remote")
-        else:
-            self.main_icon, self.main_enabled = "play", True
         web_on = running and mode in ("hunt", "debug", "calibrate")
+        self.code_text = self.note or (self.code if web_on and self.code else
+                                       "" if running else self.last_exit or "")
+        if not running:
+            self.main_icon, self.main_enabled = "play", True
+        elif s and not s.get("running") and not s.get("remote") and mode != "diagnose":
+            self.main_icon, self.main_enabled = "play", True  # paused: by a find, or Ctrl+Shift+H
+        else:
+            self.main_icon, self.main_enabled = "stop", True
         m = self.menu
-        m.entryconfig("Stop", state="normal" if running else "disabled")
         m.entryconfig("Watch only*", state="disabled" if running else "normal")
-        m.entryconfig("Website code*", label=f"Website code  {self.code}" if web_on and self.code else
-                      "Website code: connecting..." if web_on else "Website code: while it hunts",
-                      state="normal" if web_on and self.code else "disabled")
         for item in ("New website code", "Log out every browser"):
             m.entryconfig(item, state="normal" if web_on and self.code else "disabled")
         self.draw()
 
     def draw(self):
-        drawn = (self.text, self.dot, self.main_icon, self.main_enabled, self.found_now, bool(self.update))
+        drawn = (self.code_text, self.main_icon, self.main_enabled, self.found_now, bool(self.update))
         if drawn == getattr(self, "drawn", None):
             return  # the same again: left alone, so a click on it isn't lost
         self.drawn = drawn
@@ -270,7 +265,7 @@ class Hunt:
         self.lit = {}  # what the mouse lights up: tag -> (item, color, lit color)
         light = self.found_now  # a find turns the pill white
         fill, ink, dim, edge = (PAPER, INK, "#6a6a6a", "#cfcfcf") if light else (INK, PAPER, "#8a8a8a", "#3a3a3a")
-        hover_bg = "#e8e8e8" if light else "#2e2e2e"
+        hover_bg, box = ("#e8e8e8", "#efefef") if light else ("#2e2e2e", "#222222")
 
         def pill(x0, y0, x1, y1, color, tags=()):
             r = (y1 - y0) / 2
@@ -282,37 +277,103 @@ class Hunt:
         pill(1, 1, W - 1, H - 1, fill, "drag")
         cy = H / 2
 
-        def circle(cx, r, color, tag, y=cy, outline=""):
-            return c.create_oval(cx - r, y - r, cx + r, y + r, fill=color, outline=outline, tags=tag,
-                                 width=max(1.5, 1.5 * u))
+        def circle(cx, r, color, tag, y=cy):
+            return c.create_oval(cx - r, y - r, cx + r, y + r, fill=color, outline="", tags=tag)
 
-        # the dot, then the words; from the right: more, start / pause
-        x0 = 26 * u
-        if light:
-            x0 = 10 * u  # white says it already: the name gets the room
-        elif self.dot == "ring":
-            circle(x0, 4 * u, fill, "drag", outline=dim)
+        # start / stop
+        x = 8 * u + 17 * u
+        self.lit["main"] = (circle(x, 17 * u, ink, "main"), ink, dim)
+        if self.main_icon == "play":
+            c.create_polygon(x - 4 * u, cy - 6.5 * u, x - 4 * u, cy + 6.5 * u, x + 7 * u, cy, fill=fill,
+                             outline="", tags="main")
         else:
-            circle(x0, 4 * u, ink if self.dot == "full" else edge, "drag")
+            c.create_rectangle(x - 5.5 * u, cy - 5.5 * u, x + 5.5 * u, cy + 5.5 * u, fill=fill, outline="",
+                               tags="main")
+        # the website code, which opens the website
+        left = x + 17 * u + 14 * u
+        code = self.code_text if light or self.code_text else "------"
+        color = ink if self.code and code == self.code else dim if self.code_text else edge
+        self.lit["code"] = (c.create_text(left, cy, text=code, anchor="w", font=self.font, fill=color,
+                                          tags="code"), color, ink if code == self.code else color)
+        # more, at the right end
         x = W - round(28 * u)
         self.lit["more"] = (circle(x, 15 * u, fill, "more"), fill, hover_bg)
         for dx in (-6, 0, 6):
             circle(x + dx * u, 1.8 * u, ink, "more")
         if self.update:
             circle(x + 10 * u, 2.4 * u, ink, "more", cy - 9 * u)  # an update is waiting in the menu
-        x -= round(40 * u)
-        on = self.main_enabled
-        self.lit["main"] = (circle(x, 17 * u, ink if on else edge, "main"),) + ((ink, dim) if on else (edge, edge))
-        if self.main_icon == "play":
-            c.create_polygon(x - 4 * u, cy - 6.5 * u, x - 4 * u, cy + 6.5 * u, x + 7 * u, cy, fill=fill,
-                             outline="", tags="main")
-        else:
-            for x1 in (x - 5 * u, x + 1.5 * u):
-                c.create_rectangle(x1, cy - 6 * u, x1 + 3.5 * u, cy + 6 * u, fill=fill, outline="", tags="main")
-        left, right = x0 + 14 * u, x - 17 * u - 12 * u
-        c.create_text(left, cy, text=self.fit(self.text, self.font, right - left), anchor="w", font=self.font,
-                      fill=ink, tags="drag")
+        # the webhook box, between
+        x0, x1 = left + 92 * u, x - 20 * u
+        pill(x0, cy - 14 * u, x1, cy + 14 * u, box, "hook")
+        self.hook_box.config(bg=box, fg=ink if self.hook_open else dim, insertbackground=ink,
+                             selectbackground=dim, selectforeground=fill)
+        c.create_window(x0 + 12 * u, cy, window=self.hook_box, anchor="w", width=x1 - x0 - 24 * u,
+                        height=22 * u)
         self.hovering(self.hover)
+
+    # ------------------------------------------------------------ the webhook
+
+    def hook_saved(self):
+        try:
+            with open(CONFIG, encoding="utf-8") as f:
+                hook = json.load(f).get("webhook", "")
+            return hook if isinstance(hook, str) else ""
+        except (OSError, ValueError, AttributeError):
+            return ""
+
+    def hook_say(self, words=None):
+        """The box when it isn't being typed in: whether there's a webhook."""
+        self.hook_open = False
+        self.hook_var.set(words or ("Webhook on" if self.hook else "Discord webhook"))
+        self.drawn = None
+        self.draw()
+
+    def hook_in(self, e=None):
+        if not self.hook_open:
+            self.hook_open = True
+            self.hook_var.set(self.hook)
+            self.hook_box.select_range(0, "end")
+            self.hook_box.icursor("end")
+            self.drawn = None
+            self.draw()
+
+    def hook_out(self, e=None):
+        """Typed in, then left (or Enter): saved in config.json, and a hunt that's
+        on starts again with it."""
+        if not self.hook_open:
+            return
+        url = self.hook_var.get().strip()
+        if url == self.hook:
+            return self.hook_say()
+        if url and not re.match(WEBHOOK, url):
+            self.hook_say("Not a webhook")
+            self.root.after(2500, lambda: self.hook_open or self.hook_say())
+            return
+        try:
+            with open(CONFIG, encoding="utf-8") as f:
+                cfg = json.load(f)
+            if not isinstance(cfg, dict):
+                raise ValueError
+        except (OSError, ValueError):
+            self.hook_say("config.json has a mistake")
+            return
+        save_json(CONFIG, {**cfg, "webhook": url})
+        self.hook = url
+        self.hook_say()
+        if self.proc is not None and self.mode in ("hunt", "watch", "debug"):
+            mode = self.mode
+            self.stop(wait=True)
+            self.proc = None
+            self.start(mode)
+
+    def hook_paste(self, e=None):
+        self.hook_in()
+        try:
+            self.hook_var.set(self.root.clipboard_get().strip())
+        except tk.TclError:
+            pass
+        self.hook_box.icursor("end")
+        return "break"
 
     @staticmethod
     def fit(text, font, width):
@@ -327,8 +388,14 @@ class Hunt:
     def main(self):
         if self.proc is None:
             self.start("watch" if self.watch.get() else "hunt")
+        elif self.main_icon == "play":
+            self.send("toggle")  # paused (a find, or Ctrl+Shift+H): carry on
         else:
-            self.send("toggle")
+            self.stop()
+
+    def open_site(self):
+        if self.code and self.code_text == self.code:
+            webbrowser.open(SITE + "/app")
 
     def start(self, mode):
         if self.proc is not None:
@@ -574,7 +641,7 @@ def main():
 
 def smoke(hunt):
     """The Windows build's check (--smoke): the pill comes up and goes through
-    every state and the menu, then Hunt closes. Anything
+    every state, the menu and the webhook box, then Hunt closes. Anything
     that went wrong is in smoke.txt, and Hunt.exe ends with 1."""
     root, errors = hunt.root, []
     root.report_callback_exception = lambda *exc: errors.append("".join(traceback.format_exception(*exc)))
@@ -596,12 +663,26 @@ def smoke(hunt):
             root.update()
         hunt.proc = None
         hunt.show_state()
+        for url in ("not a webhook", "https://discord.com/api/webhooks/1/smoke", ""):
+            hunt.hook_in()
+            hunt.hook_var.set(url)
+            hunt.hook_out()
+            root.update()
         hunt.offer_update({"version": VERSION + 1, "name": "smoke"})
         for line in ("11:38:34  #60   Marill Lv51  (reskin KYOBLOXER, gradient IMPULSIVE BEAST) catch",
                      "  catch: caught (1 ball(s), last Quick Ball, 1 turns)", "|| paused (Ctrl+Shift+H to resume)",
                      "  (no encounter for 31 min, screenshot: C:\\Hunt\\debug\\x.png)", "waiting for an encounter..."):
             hunt.add_line(line)
         root.update()
+        try:  # a picture of it, with what's behind it: only the Windows build asks (HUNT_PICTURE)
+            if not os.environ.get("HUNT_PICTURE"):
+                raise ImportError
+            from PIL import ImageGrab
+            x, y = root.winfo_rootx(), root.winfo_rooty()
+            ImageGrab.grab(bbox=(x - 20, y - 20, x + root.winfo_width() + 20, y + root.winfo_height() + 20)
+                           ).save(os.path.join(DATA, "pill.png"))
+        except Exception:
+            pass
         size = f"ok: the pill is {root.winfo_width()} x {root.winfo_height()} at {root.winfo_x()}, {root.winfo_y()}\n"
     except Exception:
         errors.append(traceback.format_exc())

@@ -72,6 +72,20 @@ jobs:
           Get-Content "$env:HUNT_DATA\smoke.txt"
           exit $p.ExitCode
 
+      - name: A picture of the pill on Windows
+        continue-on-error: true
+        env:
+          HUNT_DATA: ${{ runner.temp }}\pill
+          HUNT_PICTURE: "1"
+        run: python app.py --smoke
+
+      - uses: actions/upload-artifact@v7
+        continue-on-error: true
+        with:
+          name: pill
+          path: ${{ runner.temp }}/pill/pill.png
+          retention-days: 3
+
       - name: HuntSetup.exe
         env:
           NAME: ${{ inputs.name || 'test' }}

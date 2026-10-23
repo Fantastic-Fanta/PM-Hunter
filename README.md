@@ -27,11 +27,12 @@ open it, and Hunt is in the Start menu and on the desktop (no admin, no
 Python). Windows warns about it at first ("Windows protected your PC": **More
 info > Run anyway**) because the installer isn't signed.
 
-The window (`app.py`, Hunt.exe) is a pill with no frame, dragged anywhere: a
-dot (filled while it hunts, a ring while it doesn't), the encounters so far,
-start / pause, and **•••** for everything else: **Stop**, **Watch only**,
-**Finds**, the website code, Check this PC, Test catching, fit the layout
-again, **Send problem reports** and Close. A find turns it white, with the name. The
+The window (`app.py`, Hunt.exe) is a pill with no frame, dragged anywhere:
+start / stop (play again after a find or Ctrl+Shift+H carries on), the website
+code (click it for the website), a box for the Discord webhook (saved in
+config.json; a hunt that's on starts again with it; right click pastes), and
+**•••** for the rest: **Watch only**, **Finds**, Check this PC, Test catching, fit the layout
+again, **Send problem reports** and Close. A find turns it white. The
 hunter itself is pokehunt.py
 (hunt-engine.exe), run by the window with `--window`. What a PC keeps
 (config.json, finds, calibration, the website key) is in `%LOCALAPPDATA%\Hunt`
