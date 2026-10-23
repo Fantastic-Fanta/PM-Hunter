@@ -85,7 +85,7 @@ class Hunt:
         self.code = ""
         self.last_line = ""
         self.settings = load_settings()
-        self.last_exit = None     # (title, detail) the status shows after the hunter ended
+        self.last_exit = None     # the word the pill shows after the hunter ended: Done, Stopped
         self.update = None        # windows.json, when there's a newer build
         self.update_pending = False
         self.setup = None         # the downloaded installer
@@ -122,7 +122,7 @@ class Hunt:
         # a pill with no frame: the window's own color is see-through around it
         root.overrideredirect(True)
         u = self.u = max(1.0, root.winfo_fpixels("1i") / 96)  # Windows' display scaling
-        self.W, self.H = round(380 * u), round(52 * u)
+        self.W, self.H = round(240 * u), round(52 * u)
         if WINDOWS:
             clear = KEY
             root.attributes("-transparentcolor", KEY)
@@ -132,9 +132,7 @@ class Hunt:
         root.configure(bg=clear)
         c = self.canvas = tk.Canvas(root, width=self.W, height=self.H, bg=clear, highlightthickness=0, bd=0)
         c.pack()
-        self.title_font = tkfont.Font(family=FONT, size=11, weight="bold")
-        self.sub_font = tkfont.Font(family=FONT, size=10)
-        self.code_font = tkfont.Font(family=MONO, size=10, weight="bold")
+        self.font = tkfont.Font(family=FONT, size=11, weight="bold")
         sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
         x, y = self.settings.get("pos") or (0, -1)
         if not (0 <= x <= sw - self.W // 2 and 0 <= y <= sh - self.H):
@@ -142,8 +140,7 @@ class Hunt:
         root.geometry(f"{self.W}x{self.H}+{x}+{y}")
 
         self.hover = None
-        actions = {"main": self.main, "stop": self.stop, "more": self.more,
-                   "code": lambda: webbrowser.open(SITE + "/app")}
+        actions = {"main": self.main, "more": self.more}
         for tag, action in actions.items():
             c.tag_bind(tag, "<Enter>", lambda e, t=tag: self.hovering(t))
             c.tag_bind(tag, "<Leave>", lambda e: self.hovering(None))
@@ -155,9 +152,11 @@ class Hunt:
         self.watch = tk.BooleanVar(value=False)
         self.reports = tk.BooleanVar(value=self.settings.get("reports", True))
         menu = tk.Menu(root, tearoff=0)
-        menu.add_command(label="Finds", command=lambda: self.open_folder("finds"))
+        menu.add_command(label="Stop", command=self.stop)
         menu.add_checkbutton(label="Watch only (never clicks)", variable=self.watch)
+        menu.add_command(label="Finds", command=lambda: self.open_folder("finds"))
         menu.add_separator()
+        menu.add_command(label="Website code", command=lambda: webbrowser.open(SITE + "/app"))
         menu.add_command(label="New website code", command=lambda: self.send("code"))
         menu.add_command(label="Log out every browser", command=self.log_out_browsers)
         menu.add_separator()
@@ -199,17 +198,13 @@ class Hunt:
         save_json(SETTINGS, self.settings)
 
     def hovering(self, tag):
-        """Under the mouse: lighter, and the words say what it does. Recolored, not
-        drawn again, or the click after it would miss what it was on."""
+        """Under the mouse: lighter. Recolored, not drawn again, or the click
+        after it would miss what it was on."""
         self.hover = tag
         c = self.canvas
         c.config(cursor="hand2" if tag and (tag != "main" or self.main_enabled) else "")
         for t, (item, normal, lit) in self.lit.items():
             c.itemconfig(item, fill=lit if t == tag else normal)
-        hints = {"main": self.main_label, "stop": "Stop", "more": "More",
-                 "code": "Open the website" if self.code else "Connecting to the website"}
-        item, room = self.sub_item
-        c.itemconfig(item, text=self.fit(hints.get(tag) or self.sub, self.sub_font, room) if room > 0 else "")
 
     def more(self):
         x, y = self.root.winfo_rootx() + self.W - round(40 * self.u), self.root.winfo_rooty() + self.H
@@ -228,48 +223,45 @@ class Hunt:
             subprocess.Popen(["open", path])
 
     def show_state(self):
-        """What the pill says (title, then greyer) and which buttons it has."""
+        """The pill: a dot (filled while it hunts, a ring while it doesn't, grey
+        while it gets going), the encounters so far, and start / pause. A find
+        turns it white, with the name."""
         running = self.proc is not None
-        s = self.state
-        mode = self.mode
-        n = s.get("count", 0)
-        count = f"{n} encounter{'' if n == 1 else 's'}"
-        self.found_now = False
+        s, mode = self.state, self.mode
+        self.found_now = bool(running and s.get("phase") == "battle" and s.get("wanted") and not s.get("remote"))
         if not running:
-            title, sub = self.last_exit or ("Ready", "")
-        elif mode == "diagnose":
-            title, sub = "Checking this PC", ""
-        elif not s:
-            title, sub = "Starting", ""
+            self.dot, text = "ring", (self.last_exit or "")
+        elif mode == "diagnose" or not s:
+            self.dot, text = "dim", "Checking" if mode == "diagnose" else ""
+        elif self.found_now:
+            self.dot, text = "full", s.get("enc", "")
         elif s.get("remote"):
-            title, sub = "Taken over", "by the website"
-        elif not s.get("running"):
-            title, sub = "Paused", count
-        elif s.get("phase") == "battle" and s.get("wanted"):
-            title, sub, self.found_now = "Found", s.get("enc", ""), True
+            self.dot, text = "dim", "Website"
         else:
-            title = "Watching" if mode == "watch" else "Test catching" if mode == "debug" else "Hunting"
-            sub = f"{count} · in a battle" if s.get("phase") == "battle" else count
-        self.title, self.sub = title, self.note or sub
+            self.dot, text = "full" if s.get("running") else "ring", str(s.get("count", 0))
+        self.text = self.note or text
 
         if not running:
-            self.main_label, self.main_icon, self.main_enabled = "Start", "play", True
+            self.main_icon, self.main_enabled = "play", True
         elif mode == "diagnose":
-            self.main_label, self.main_icon, self.main_enabled = "Checking", "play", False
+            self.main_icon, self.main_enabled = "play", False
         elif s.get("running") or s.get("remote") or not s:
-            self.main_label, self.main_icon, self.main_enabled = "Pause", "pause", bool(s) and not s.get("remote")
+            self.main_icon, self.main_enabled = "pause", bool(s) and not s.get("remote")
         else:
-            self.main_label, self.main_icon, self.main_enabled = "Resume", "play", True
-        self.running = running
-        self.web_on = running and mode in ("hunt", "debug", "calibrate")
-        self.menu.entryconfig("Watch only*", state="disabled" if running else "normal")
+            self.main_icon, self.main_enabled = "play", True
+        web_on = running and mode in ("hunt", "debug", "calibrate")
+        m = self.menu
+        m.entryconfig("Stop", state="normal" if running else "disabled")
+        m.entryconfig("Watch only*", state="disabled" if running else "normal")
+        m.entryconfig("Website code*", label=f"Website code  {self.code}" if web_on and self.code else
+                      "Website code: connecting..." if web_on else "Website code: while it hunts",
+                      state="normal" if web_on and self.code else "disabled")
         for item in ("New website code", "Log out every browser"):
-            self.menu.entryconfig(item, state="normal" if self.web_on and self.code else "disabled")
+            m.entryconfig(item, state="normal" if web_on and self.code else "disabled")
         self.draw()
 
     def draw(self):
-        drawn = (self.title, self.sub, self.main_icon, self.main_enabled, self.running, self.web_on, self.code,
-                 self.found_now, bool(self.update))
+        drawn = (self.text, self.dot, self.main_icon, self.main_enabled, self.found_now, bool(self.update))
         if drawn == getattr(self, "drawn", None):
             return  # the same again: left alone, so a click on it isn't lost
         self.drawn = drawn
@@ -290,45 +282,36 @@ class Hunt:
         pill(1, 1, W - 1, H - 1, fill, "drag")
         cy = H / 2
 
-        def circle(cx, r, color, tag, y=cy):
-            return c.create_oval(cx - r, y - r, cx + r, y + r, fill=color, outline="", tags=tag)
+        def circle(cx, r, color, tag, y=cy, outline=""):
+            return c.create_oval(cx - r, y - r, cx + r, y + r, fill=color, outline=outline, tags=tag,
+                                 width=max(1.5, 1.5 * u))
 
-        # the buttons, from the right: more, stop (while it runs), start / pause
-        x = W - round(30 * u)
+        # the dot, then the words; from the right: more, start / pause
+        x0 = 26 * u
+        if light:
+            x0 = 10 * u  # white says it already: the name gets the room
+        elif self.dot == "ring":
+            circle(x0, 4 * u, fill, "drag", outline=dim)
+        else:
+            circle(x0, 4 * u, ink if self.dot == "full" else edge, "drag")
+        x = W - round(28 * u)
         self.lit["more"] = (circle(x, 15 * u, fill, "more"), fill, hover_bg)
         for dx in (-6, 0, 6):
             circle(x + dx * u, 1.8 * u, ink, "more")
         if self.update:
             circle(x + 10 * u, 2.4 * u, ink, "more", cy - 9 * u)  # an update is waiting in the menu
-        x -= round(36 * u)
-        if self.running:
-            self.lit["stop"] = (circle(x, 15 * u, fill, "stop"), fill, hover_bg)
-            c.create_rectangle(x - 5 * u, cy - 5 * u, x + 5 * u, cy + 5 * u, fill=ink, outline="", tags="stop")
-            x -= round(38 * u)
+        x -= round(40 * u)
         on = self.main_enabled
         self.lit["main"] = (circle(x, 17 * u, ink if on else edge, "main"),) + ((ink, dim) if on else (edge, edge))
-        face = fill
         if self.main_icon == "play":
-            c.create_polygon(x - 4 * u, cy - 6.5 * u, x - 4 * u, cy + 6.5 * u, x + 7 * u, cy, fill=face,
+            c.create_polygon(x - 4 * u, cy - 6.5 * u, x - 4 * u, cy + 6.5 * u, x + 7 * u, cy, fill=fill,
                              outline="", tags="main")
         else:
-            for x0 in (x - 5 * u, x + 1.5 * u):
-                c.create_rectangle(x0, cy - 6 * u, x0 + 3.5 * u, cy + 6 * u, fill=face, outline="", tags="main")
-        right = x - 17 * u - 14 * u  # where the words have to end
-
-        if self.web_on and not light:  # the website code, which opens the website
-            code = self.code or "·····"
-            color = dim if self.code else edge
-            self.lit["code"] = (c.create_text(right, cy, text=code, anchor="e", font=self.code_font, fill=color,
-                                              tags="code"), color, ink if self.code else edge)
-            right -= self.code_font.measure(code) + 16 * u
-
-        left = 24 * u
-        title = self.fit(self.title, self.title_font, right - left)
-        c.create_text(left, cy, text=title, anchor="w", font=self.title_font, fill=ink, tags="drag")
-        left += self.title_font.measure(title) + 8 * u
-        room = right - left if right - left > 30 * u else 0
-        self.sub_item = (c.create_text(left, cy, anchor="w", font=self.sub_font, fill=dim, tags="drag"), room)
+            for x1 in (x - 5 * u, x + 1.5 * u):
+                c.create_rectangle(x1, cy - 6 * u, x1 + 3.5 * u, cy + 6 * u, fill=fill, outline="", tags="main")
+        left, right = x0 + 14 * u, x - 17 * u - 12 * u
+        c.create_text(left, cy, text=self.fit(self.text, self.font, right - left), anchor="w", font=self.font,
+                      fill=ink, tags="drag")
         self.hovering(self.hover)
 
     @staticmethod
@@ -454,11 +437,11 @@ class Hunt:
     def ended(self, proc):
         code = proc.returncode
         if self.mode == "diagnose":
-            self.last_exit = ("Check done", "in hunt.log")
+            self.last_exit = "Done"  # what it found is in hunt.log
         elif code not in (0, None) and self.last_line and "stopped" not in self.last_line:
-            self.last_exit = ("Stopped", self.last_line)
+            self.last_exit = "Stopped"  # why is in hunt.log
         else:
-            self.last_exit = ("Stopped", "")
+            self.last_exit = None
         self.proc, self.state, self.code = None, {}, ""
         if self.update_pending:
             self.install_update()
