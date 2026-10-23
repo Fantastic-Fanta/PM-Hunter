@@ -463,7 +463,7 @@ impl Hunt {
             self.ctx.send_viewport_cmd(ViewportCommand::RequestUserAttention(egui::UserAttentionType::Informational));
             #[cfg(windows)]
             unsafe {
-                windows_sys::Win32::UI::WindowsAndMessaging::MessageBeep(0);
+                windows_sys::Win32::System::Diagnostics::Debug::MessageBeep(0);
             }
         }
         self.was_found = if found { enc } else { String::new() };

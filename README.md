@@ -27,7 +27,7 @@ open it, and Hunt is in the Start menu and on the desktop (no admin, no
 Python). Windows warns about it at first ("Windows protected your PC": **More
 info > Run anyway**) because the installer isn't signed.
 
-The window (`app.py`, Hunt.exe) is a pill with no frame, dragged anywhere:
+The window (Hunt.exe, Rust: `window/`) is a pill with no frame, dragged anywhere:
 start / stop (play again after a find or Ctrl+Shift+H carries on), the website
 code (click it for the website), a box for the Discord webhook (saved in
 config.json; a hunt that's on starts again with it; right click pastes), and
@@ -52,8 +52,13 @@ and restarts.
 PyInstaller with `windows/hunt.spec`, Inno Setup with `windows/hunt.iss`,
 Python 3.12) and publishes it; GitHub builds what's pushed, so push first.
 The build also reads the samples with Windows' OCR (the "read like on the
-Mac" line). Pushes build it too, as a check. On a Mac, `python app.py` opens
-the same pill (with dark corners there: Tk on a Mac won't make them clear).
+Mac" line), and Hunt.exe has to come up and go through its states (`--smoke`,
+with a picture of the screen in the run's `pill` files). Pushes build it too,
+as a check. On a Mac the same window runs the Python hunter:
+
+    HUNT_ENGINE="$PWD/.venv/bin/python -u $PWD/pokehunt.py" HUNT_DATA=$PWD cargo run --manifest-path window/Cargo.toml
+
+(`HUNT_WATCH=1` too, for one that never clicks; `--start` presses play.)
 
 Published builds report what they print, their errors, and screenshots of
 calibration, trouble, finds and the first 10 clicks to the Windows debug
