@@ -207,6 +207,7 @@ struct Hunt {
     pos_saved: Option<Pos2>,
     pos_changed: Option<Instant>,
     was_found: String,
+    born: Option<Instant>, // the opening's start: its first frame
     smoke: Option<Smoke>,
     start_now: bool, // the hunter starts with Hunt, paused (--start: hunting)
 }
@@ -269,6 +270,7 @@ impl Hunt {
             pos_saved: pos,
             pos_changed: None,
             was_found: String::new(),
+            born: None,
             smoke: env::args().any(|a| a == "--smoke").then(Smoke::new),
             start_now: !env::args().any(|a| a == "--smoke"),
             paths,
@@ -707,15 +709,36 @@ impl Hunt {
 
     fn draw(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        let painter = ui.painter().clone();
         let light = self.found_now();
         let c = look(light);
         let r = H / 2.0;
 
+        // opening: Clodsire's circle comes in, stretches out into the pill, and
+        // gives way to what's in it
+        let t = self.born.get_or_insert_with(Instant::now).elapsed().as_secs_f32(); // from the first frame shown
+        let ease = |x: f32| 1.0 - (1.0 - x.clamp(0.0, 1.0)).powi(3);
+        let (pop, grow, reveal) = (ease(t / 0.35), ease((t - 0.4) / 0.6), ease((t - 0.85) / 0.4));
+        if reveal < 1.0 {
+            ctx.request_repaint();
+        }
+        let mut painter = ui.painter().clone();
+        painter.set_opacity(pop);
+
         // the outline; dragged by anything that isn't a button
-        let shape = Rect::from_min_size(Pos2::ZERO, vec2(W, H));
-        painter.rect_filled(shape, r, c.edge); // a hairline around it, for dark games
-        painter.rect_filled(shape.shrink(1.0), r - 1.0, c.fill);
+        let shape = Rect::from_min_size(Pos2::ZERO, vec2(H + (W - H) * grow, H))
+            .shrink((1.0 - pop) * H * 0.2);
+        painter.rect_filled(shape, shape.height() / 2.0, c.edge); // a hairline around it, for dark games
+        painter.rect_filled(shape.shrink(1.0), shape.height() / 2.0 - 1.0, c.fill);
+        if reveal < 1.0 {
+            let clodsire = egui::Image::new(egui::include_image!("../icons/clodsire-192.png"))
+                .tint(Color32::WHITE.gamma_multiply((1.0 - reveal) * pop));
+            clodsire.paint_at(ui, Rect::from_center_size(pos2(r, r), Vec2::splat(H * (0.8 + 0.2 * pop))));
+        }
+        if reveal <= 0.0 {
+            return;
+        }
+        ui.set_opacity(reveal);
+        let painter = ui.painter().clone();
         let bg = ui.interact(shape, Id::new("bg"), Sense::click_and_drag());
         if bg.drag_started() {
             ctx.send_viewport_cmd(ViewportCommand::StartDrag);
@@ -725,21 +748,25 @@ impl Hunt {
         }
         let cy = H / 2.0;
 
-        // start / stop; a right click turns Debug mode on, and a ring round it says so
+        // start / stop; a right click starts Debug mode, and the button turns into a bug while it's on
         let main = pos2(INSET + CONTROL / 2.0, cy);
         let resp = ui.interact(Rect::from_center_size(main, Vec2::splat(CONTROL)), Id::new("main"), Sense::click());
-        if self.test {
-            painter.circle_stroke(main, CONTROL / 2.0 + 3.5, Stroke::new(1.5_f32, c.ink));
-        }
         painter.circle_filled(main, CONTROL / 2.0, if resp.hovered() { c.dim } else { c.ink });
         if resp.secondary_clicked() {
             self.debug_run();
         }
+        let bug = ease(ctx.animate_bool_with_time(Id::new("bug"), self.test, 0.3));
+        let (k, face) = (1.0 - bug, c.fill.gamma_multiply(1.0 - bug)); // play / stop, shrinking away
         if self.shows_play() {
-            let pts = vec![main + vec2(-3.0, -5.0), main + vec2(-3.0, 5.0), main + vec2(5.5, 0.0)];
-            painter.add(egui::Shape::convex_polygon(pts, c.fill, Stroke::NONE));
+            let pts = [vec2(-3.0, -5.0), vec2(-3.0, 5.0), vec2(5.5, 0.0)].map(|v| main + v * k).to_vec();
+            painter.add(egui::Shape::convex_polygon(pts, face, Stroke::NONE));
         } else {
-            painter.rect_filled(Rect::from_center_size(main, vec2(8.0, 8.0)), 1.0, c.fill);
+            painter.rect_filled(Rect::from_center_size(main, Vec2::splat(8.0 * k)), 1.0, face);
+        }
+        if bug > 0.0 {
+            egui::Image::new(egui::include_image!("../icons/bug.svg"))
+                .tint(c.fill.gamma_multiply(bug))
+                .paint_at(ui, Rect::from_center_size(main, Vec2::splat(15.0 * (0.5 + 0.5 * bug))));
         }
         if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
             self.main_button();
@@ -763,6 +790,14 @@ impl Hunt {
             c.dim
         };
         painter.text(pos2(left, cy), Align2::LEFT_CENTER, &shown, code_font, color);
+        let web = matches!(self.mode.as_str(), "hunt" | "debug" | "calibrate");
+        if shown.is_empty() && self.running() && web && !self.fake {
+            for i in 0..3 {  // the website's code on its way: three dots, breathing in turn
+                let a = 0.5 + 0.5 * (t * 4.0 - i as f32 * 0.8).sin();
+                painter.circle_filled(pos2(left + 3.0 + i as f32 * 9.0, cy), 2.2, c.dim.gamma_multiply(0.35 + 0.65 * a));
+            }
+            ctx.request_repaint();
+        }
         if is_code && resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
             open_path(&format!("{}/app", site()));
         }

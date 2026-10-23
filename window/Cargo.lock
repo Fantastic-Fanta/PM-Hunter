@@ -606,6 +606,7 @@ dependencies = [
  "ahash",
  "egui",
  "enum-map",
+ "image",
  "log",
  "profiling",
  "resvg",
@@ -1033,6 +1034,7 @@ version = "1.0.0"
 dependencies = [
  "eframe",
  "egui_extras",
+ "image",
  "raw-window-handle",
  "serde_json",
  "sha2",

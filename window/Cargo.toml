@@ -11,7 +11,8 @@ path = "src/main.rs"
 
 [dependencies]
 eframe = { version = "=0.31.1", default-features = false, features = ["default_fonts", "glow", "wgpu"] }
-egui_extras = { version = "=0.31.1", default-features = false, features = ["svg"] }  # the icons (icons/, Lucide)
+egui_extras = { version = "=0.31.1", default-features = false, features = ["svg", "image"] }  # the icons (icons/)
+image = { version = "0.25", default-features = false, features = ["png"] }  # Clodsire, opening
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
 ureq = "2.12"
