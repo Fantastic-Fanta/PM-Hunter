@@ -164,6 +164,7 @@ enum Msg {
 /// The opening's window: started once it's over the whole screen.
 struct Intro {
     started: Option<Instant>,
+    handover: Option<Instant>, // back to the pill's window: since when
     origin: Pos2, // where the window is: the screen's corner, give or take
     frames: u32,
 }
@@ -288,7 +289,7 @@ impl Hunt {
             // (only where it's see-through: on Direct3D the window over the screen would be black)
             intro: ((!env::args().any(|a| a == "--smoke") || env::args().any(|a| a == "--intro"))
                     && env::var_os("HUNT_NO_INTRO").is_none() && env::var_os("HUNT_RENDERER").is_none())
-                .then_some(Intro { started: None, origin: Pos2::ZERO, frames: 0 }),
+                .then_some(Intro { started: None, handover: None, origin: Pos2::ZERO, frames: 0 }),
             smoke: env::args().any(|a| a == "--smoke").then(Smoke::new),
             start_now: !env::args().any(|a| a == "--smoke"),
             paths,
@@ -750,12 +751,23 @@ impl Hunt {
             ctx.request_repaint();
             return;
         }
-        if intro.started.is_some_and(|t| t.elapsed().as_secs_f32() >= INTRO_END) {
-            self.intro = None;
+        if intro.started.is_some_and(|t| t.elapsed().as_secs_f32() >= INTRO_END) && intro.handover.is_none() {
+            // back over the pill; nothing's drawn till the window's there (or it was
+            // drawn in the screen's corner for a frame)
+            intro.handover = Some(Instant::now());
             ctx.send_viewport_cmd(ViewportCommand::InnerSize(vec2(W, H)));
             ctx.send_viewport_cmd(ViewportCommand::OuterPosition(self.pos.unwrap_or(Pos2::ZERO)));
-            self.pos_saved = self.pos; // (not a move of yours)
-            self.born = None; // the pill stretches out from here
+        }
+        if let Some(since) = intro.handover {
+            let there = outer.is_some_and(|o| {
+                (o.min - self.pos.unwrap_or(Pos2::ZERO)).length() < 1.5 && (o.width() - W).abs() < 1.5
+            });
+            if there || since.elapsed() > Duration::from_millis(400) {
+                self.intro = None;
+                self.pos_saved = self.pos; // (not a move of yours)
+                self.born = None; // the pill stretches out from here
+            }
+            ctx.request_repaint();
         }
     }
 
@@ -784,10 +796,16 @@ impl Hunt {
         let travel = in_out((t - INTRO_MOVE) / (INTRO_LAND - INTRO_MOVE));
         let landed = clamp((t - INTRO_LAND) / (INTRO_END - INTRO_LAND));
 
-        // the veil: the screen dims while Clodsire's there
-        let veil = out(t / 0.5) * (1.0 - in_out((t - INTRO_MOVE) / 0.6));
+        // the veil: the screen dims while Clodsire's there, and comes back slowly
+        // (soft at both ends) as it flies down, gone by the time it lands
+        let soft = |x: f32| {
+            let x = clamp(x);
+            x * x * x * (x * (6.0 * x - 15.0) + 10.0)
+        };
+        let lifting = (t - (INTRO_MOVE - 0.3)) / (INTRO_LAND - INTRO_MOVE + 0.3);
+        let veil = soft(t / 0.6) * (1.0 - soft(lifting));
         let whole = Rect::from_min_size(Pos2::ZERO - origin.to_vec2(), screen);
-        painter.rect_filled(whole, 0.0, Color32::from_black_alpha((110.0 * veil) as u8));
+        painter.rect_filled(whole, 0.0, Color32::from_black_alpha((90.0 * veil).round() as u8));
 
         // the path: from the middle, along an arc, to the pill's end
         let start = pos2(screen.x / 2.0, screen.y / 2.0) - origin.to_vec2();
@@ -833,6 +851,20 @@ impl Hunt {
             painter.circle_stroke(end, H / 2.0 + 14.0 * out(landed),
                                   Stroke::new(1.5_f32, PAPER.gamma_multiply(0.5 * (1.0 - landed))));
         }
+    }
+
+    /// While the window goes back over the pill: the landed circle, play in it,
+    /// kept where it is on the screen wherever the window is meanwhile.
+    fn draw_landed(&self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        let Some(origin) = ctx.input(|i| i.viewport().outer_rect).map(|o| o.min) else { return };
+        let center = self.pos.unwrap_or(Pos2::ZERO) - origin.to_vec2() + vec2(H / 2.0, H / 2.0);
+        let painter = ui.painter();
+        painter.circle_filled(center, H / 2.0, gray(0x3a));
+        painter.circle_filled(center, H / 2.0 - 1.0, INK);
+        painter.circle_filled(center, CONTROL / 2.0, PAPER);
+        let pts = [vec2(-3.0, -5.0), vec2(-3.0, 5.0), vec2(5.5, 0.0)].map(|v| center + v).to_vec();
+        painter.add(egui::Shape::convex_polygon(pts, INK, Stroke::NONE));
     }
 
     // ------------------------------------------------------------ drawing
@@ -1050,8 +1082,9 @@ impl eframe::App for Hunt {
             self.smoke = Some(smoke);
         }
         egui::CentralPanel::default().frame(egui::Frame::default()).show(ctx, |ui| {
-            match self.intro.as_ref().and_then(|i| Some((i.started?, i.origin))) {
+            match self.intro.as_ref().filter(|i| i.handover.is_none()).and_then(|i| Some((i.started?, i.origin))) {
                 Some((t0, origin)) => self.draw_intro(ui, t0.elapsed().as_secs_f32(), origin),
+                None if self.intro.as_ref().is_some_and(|i| i.handover.is_some()) => self.draw_landed(ui),
                 None if self.intro.is_some() => {} // the window's getting to its size
                 None => self.draw(ui),
             }
