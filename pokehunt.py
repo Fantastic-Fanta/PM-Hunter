@@ -642,6 +642,7 @@ def keep_roblox_in_front():
 
 
 last_click = [time.time()]
+test_catch = [0]  # encounters still to catch for practice: --practice, or the window's Catch test
 AFK_EVERY = 15 * 60  # Roblox kicks after 20 min without input
 
 
@@ -771,17 +772,23 @@ def publish():
         enc = web.enc
         remote.show("@state " + json.dumps({
             "running": running.is_set(), "remote": web.remote, "count": web.encounters,
-            "phase": web.phase, "wanted": web.wanted, "enc": title(enc) if enc else ""}))
+            "phase": web.phase, "wanted": web.wanted, "enc": title(enc) if enc else "",
+            "test": test_catch[0] > 0}))
 
 
 def window_buttons():
-    """Hunt's window sends its buttons as lines: toggle, code, logout. When it
-    closes the line ends (or it just closes it to stop), and so does the hunt."""
+    """Hunt's window sends its buttons as lines: toggle, code, logout, test on /
+    test off (catch the next encounter). When it closes the line ends (or it
+    just closes it to stop), and so does the hunt."""
     def read():
         for line in sys.stdin:
             cmd = line.strip()
             if cmd == "toggle":
                 toggle()
+            elif cmd in ("test on", "test off"):
+                test_catch[0] = int(cmd == "test on")
+                say("  (Catch test: the next encounter is caught)" if test_catch[0] else "  (Catch test off)")
+                publish()
             elif cmd in ("code", "logout"):
                 website_key(devices.N_KEYCODE if cmd == "code" else devices.L_KEYCODE)
         import _thread
@@ -1835,7 +1842,7 @@ def hunt(cfg, args):
         link_website()
     last_enc = last_status = time.time()
     quiet_said = False
-    practice_left = args.practice
+    test_catch[0] = args.practice
     save_due, last_save, last_check = False, 0.0, 0.0
     last_pp, pp_tries = 0.0, 0
     if args.paused:
@@ -1944,7 +1951,7 @@ def hunt(cfg, args):
         if not again:
             send_sprite(img, lay, enc)
         action = ("website" if web.remote else "WANTED!" if rule else "-" if args.watch else
-                  "practice" if practice_left else "catch" if wanted(enc, notify) else "run")
+                  "practice" if test_catch[0] else "catch" if wanted(enc, notify) else "run")
         if not again:
             print(f"{time.strftime('%H:%M:%S')}  #{web.encounters:<4} {describe(enc):<55} {action}", flush=True)
         publish()
@@ -1968,9 +1975,10 @@ def hunt(cfg, args):
                 log_encounter(enc, "seen")
             wait_gone(lay)
         else:
-            practice = practice_left > 0
+            practice = test_catch[0] > 0
             if practice or wanted(enc, notify):  # worth catching, not stopping
-                practice_left -= practice
+                test_catch[0] -= practice
+                publish()  # the window's Catch test turns off
                 result, details = catch(enc, img, lay, cfg["catch"], first_ball=not practice, debug=args.debug)
                 if result == "taken over":
                     continue  # read again: the website battles it

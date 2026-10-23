@@ -31,18 +31,22 @@ The window (`app.py`, Hunt.exe) is a pill with no frame, dragged anywhere:
 start / stop (play again after a find or Ctrl+Shift+H carries on), the website
 code (click it for the website), a box for the Discord webhook (saved in
 config.json; a hunt that's on starts again with it; right click pastes), and
-**•••** for the rest: **Watch only**, **Finds**, Check this PC, Test catching, fit the layout
-again, **Send problem reports** and Close. A find turns it white. The
-hunter itself is pokehunt.py
-(hunt-engine.exe), run by the window with `--window`. What a PC keeps
-(config.json, finds, calibration, the website key) is in `%LOCALAPPDATA%\Hunt`
-(**••• > Open Hunt's folder**), with hunt.log: all the hunter printed (hunt.old.log
-past 5 MB). The window has no settings or log of its own: a
-new config.json has no rules, so every reskin with a gradient is caught, and
-anything more (targets, a webhook, the catch plan) is edited in that file.
-Hunt checks https://poopihunt.xyz/windows.json when it starts (and every 6
-hours); a newer build puts **Update Hunt** at the top of **•••**, which
-installs it and restarts.
+**•••**, which slides out a panel (up when the pill is low on the screen):
+**Debug mode** (every encounter caught, screenshots to the debug channel),
+**Catch test** (the next encounter caught and the game saved, then it turns
+itself off), **Preferred ball** (after the first-turn Quick Ball; Repeat Ball
+unless it says otherwise, a Park Ball replaces them all), **Update**, and the
+build, **Folder** and **Quit**. A find turns the pill white. The hunter itself
+is pokehunt.py (hunt-engine.exe), run by the window with `--window`; the
+panel's switches reach it as lines (`test on`, `test off`). What a PC keeps
+(config.json, finds, calibration, the website key, window.json for the
+window's place and Debug mode) is in `%LOCALAPPDATA%\Hunt` (**Folder**), with
+hunt.log: all the hunter printed (hunt.old.log past 5 MB). A new config.json
+has no rules, so every reskin with a gradient is caught; anything more
+(targets, the catch plan) is edited in that file. Hunt checks
+https://poopihunt.xyz/windows.json when it starts (and every 6 hours); a newer
+build puts a dot on **•••** and **Install** in the panel, which installs it
+and restarts.
 
 `./publish-windows.sh` builds it on GitHub (`.github/workflows/windows.yml`:
 PyInstaller with `windows/hunt.spec`, Inno Setup with `windows/hunt.iss`,
