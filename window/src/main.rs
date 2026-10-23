@@ -244,6 +244,7 @@ impl Hunt {
             Some(pos2(a.first()?.as_f64()? as f32, a.get(1)?.as_f64()? as f32))
         });
         hide_from_screenshots(cc);
+        no_mac_shadow(cc);
         setup_fonts(&cc.egui_ctx);
         egui_extras::install_image_loaders(&cc.egui_ctx); // the icons are SVG
         let mut visuals = egui::Visuals::dark();
@@ -1110,6 +1111,29 @@ fn chrono_now() -> String {
         Command::new("date").arg("+%Y-%m-%d %H:%M:%S").output()
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
     }
+}
+
+/// A Mac gives a window without a frame a shadow, traced from what's on it
+/// once: the opening's big circle left one behind in the middle of the screen.
+fn no_mac_shadow(cc: &eframe::CreationContext) {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::runtime::AnyObject;
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        if let Ok(handle) = cc.window_handle() {
+            if let RawWindowHandle::AppKit(h) = handle.as_raw() {
+                unsafe {
+                    let view: *mut AnyObject = h.ns_view.as_ptr().cast();
+                    let window: *mut AnyObject = objc2::msg_send![view, window];
+                    if !window.is_null() {
+                        let _: () = objc2::msg_send![window, setHasShadow: false];
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = cc;
 }
 
 /// It's on top of Roblox, so the hunter's screenshots (and anyone's) look
