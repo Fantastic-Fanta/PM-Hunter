@@ -55,9 +55,9 @@ The app is in `android/`. `Hunt.apk` is the built copy.
 When it finds one, the phone vibrates and rings. It keeps the battle alive
 until you touch the screen.
 
-Needs Android 11 or newer. To find a ball, Full Restore or Max Elixir it
-scrolls through that tab of the bag; it doesn't use the search box on a phone,
-so leave that empty (a search left in it hides the other items).
+Needs Android 11 or newer. To find a ball, Full Restore or Max Elixir it types
+its name into the bag's search box (keeping the keyboard hidden meanwhile),
+and scrolls through that tab of the bag if typing doesn't work.
 
 Under **More**: **Calibrate** draws the fitted layout on a
 picture in Pictures/Hunt, and **Share hunt log** sends what it did. Send

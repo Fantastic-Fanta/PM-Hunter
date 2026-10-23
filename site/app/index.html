@@ -58,6 +58,20 @@
   .foe-hb { left: 12px; top: 14px; width: 100px; height: 30px; }
   .foe-hb .frame { left: 2px; top: 2px; width: 92px; height: 25px; }
   .foe-hb .tail { left: 3px; top: 20px; width: 97px; height: 10px; clip-path: polygon(0 6px, 88px 0, 97px 6px, 94px 10px, 10px 10px); }
+  /* the game's extras: shiny / tint stars left of the HP bar, the reskin in tiny letters under it
+     (the box grows a little), the gradient on a tab hanging under the box, in its colors */
+  .foe-hb .marks { position: absolute; left: 5px; top: 16px; display: flex; gap: 1px; }
+  .foe-hb .rsk { position: absolute; right: 12px; top: 26px; }  /* right-aligned with the HP bar's end */
+  .foe-hb.has-rsk .frame { height: 35px; }
+  .foe-hb.has-rsk .tail { top: 30px; }
+  .gradtab { position: absolute; left: 48px; top: 26px; transform: translateX(-50%); max-width: 80px; height: 12px;
+             padding: 1px 6px 0; background: #ffffde; border-radius: 0 0 3px 3px; overflow: hidden;
+             font-family: "Gen3 Small", monospace; line-height: 9px; text-align: center; white-space: nowrap;
+             box-shadow: inset 1px 0 #526a62, inset -1px 0 #526a62, inset 0 -1px #526a62,
+                         inset 2px 0 #203900, inset -2px 0 #203900, inset 0 -2px #203900,
+                         inset 3px 0 #ded5b4, inset -3px 0 #ded5b4, inset 0 -3px #ded5b4; }
+  .gradtab span { color: transparent; -webkit-background-clip: text; background-clip: text; text-shadow: none; }
+  .foe-hb.has-rsk .gradtab { top: 36px; }
   .lead-hb { left: 126px; top: 72px; width: 106px; height: 38px; }
   .lead-hb .frame { left: 10px; top: 2px; width: 92px; height: 32px; }
   .lead-hb .tail { left: 2px; top: 18px; width: 104px; height: 20px; clip-path: polygon(96px 0, 104px 0, 104px 18px, 101px 20px, 0 20px, 4px 15px, 96px 15px); }
@@ -217,15 +231,16 @@
       <div class="stars" id="stars"></div>
       <div class="ball" id="ball" hidden></div>
       <div class="hb foe-hb" id="foe-hb" hidden>
-        <div class="tail"></div><div class="frame"></div>
+        <div class="tail"></div><div class="gradtab" id="foe-grad" hidden><span></span></div><div class="frame"></div>
+        <span class="marks" id="foe-marks"></span><span class="rsk" id="foe-rsk"></span>
         <span class="name" id="foe-name"></span><span class="status" id="foe-status" hidden></span>
         <span class="lv" id="foe-lv"></span>
-        <div class="hpwrap"><span class="hplabel"></span><div class="hpbar"><i></i><b></b></div></div>
+        <div class="hpwrap"><span class="hplabel"></span><div class="hpbar"><i></i><b></b></div><span class="hpcap"></span></div>
       </div>
       <div class="hb lead-hb" id="lead-hb" hidden>
         <div class="tail"></div><div class="frame"></div>
         <span class="name" id="lead-name"></span><span class="lv" id="lead-lv"></span>
-        <div class="hpwrap"><span class="hplabel"></span><div class="hpbar" id="lead-bar"><i></i><b></b></div></div>
+        <div class="hpwrap"><span class="hplabel"></span><div class="hpbar" id="lead-bar"><i></i><b></b></div><span class="hpcap"></span></div>
         <span class="hpnum" id="lead-hpnum"></span>
         <div class="expwrap"><span id="explabel"></span><div class="expbar"></div></div>
       </div>
@@ -310,10 +325,42 @@ const BALL = pix([
   "....kkkk....", "..kkrrrrkk..", ".krrwrrrrrk.", ".krwrrrrrrk.", "krrrrkkrrrrk", "kkkkkwwkkkkk",
   "kwwwkwwkwwwk", "kwwwwkkwwwwk", ".kwwwwwwwwk.", ".kwwwwwwwwk.", "..kkwwwwkk..", "....kkkk...."],
   {k: "#202020", r: "#e83820", w: "#f8f8f8"});
+// shiny: the game's blue star; tint: its yellow sparkle
+const SHINY_STAR = pix(["...#...", "..###..", "#######", ".#####.", "..###..", ".##.##.", "##...##"], {"#": "#2850c8"});
+const TINT_STAR = pix(["...#...", "...#...", "..###..", "#######", "..###..", "...#...", "...#..."], {"#": "#e0a800"});
+// tiny 3 x 5 letters, like the HP box's own HP and EXP labels
+const TINY = {
+  A: [".#.", "#.#", "###", "#.#", "#.#"], B: ["##.", "#.#", "##.", "#.#", "##."], C: [".##", "#..", "#..", "#..", ".##"],
+  D: ["##.", "#.#", "#.#", "#.#", "##."], E: ["###", "#..", "##.", "#..", "###"], F: ["###", "#..", "##.", "#..", "#.."],
+  G: [".##", "#..", "#.#", "#.#", ".##"], H: ["#.#", "#.#", "###", "#.#", "#.#"], I: ["###", ".#.", ".#.", ".#.", "###"],
+  J: ["..#", "..#", "..#", "#.#", ".#."], K: ["#.#", "#.#", "##.", "#.#", "#.#"], L: ["#..", "#..", "#..", "#..", "###"],
+  M: ["#...#", "##.##", "#.#.#", "#...#", "#...#"], N: ["#..#", "##.#", "#.##", "#..#", "#..#"],
+  O: [".#.", "#.#", "#.#", "#.#", ".#."], P: ["##.", "#.#", "##.", "#..", "#.."], Q: [".#.", "#.#", "#.#", "##.", ".##"],
+  R: ["##.", "#.#", "##.", "#.#", "#.#"], S: [".##", "#..", ".#.", "..#", "##."], T: ["###", ".#.", ".#.", ".#.", ".#."],
+  U: ["#.#", "#.#", "#.#", "#.#", "###"], V: ["#.#", "#.#", "#.#", "#.#", ".#."],
+  W: ["#...#", "#...#", "#.#.#", "##.##", "#...#"], X: ["#.#", "#.#", ".#.", "#.#", "#.#"],
+  Y: ["#.#", "#.#", ".#.", ".#.", ".#."], Z: ["###", "..#", ".#.", "#..", "###"],
+  0: ["###", "#.#", "#.#", "#.#", "###"], 1: [".#.", "##.", ".#.", ".#.", "###"], 2: ["##.", "..#", ".#.", "#..", "###"],
+  3: ["##.", "..#", ".#.", "..#", "##."], 4: ["#.#", "#.#", "###", "..#", "..#"], 5: ["###", "#..", "##.", "..#", "##."],
+  6: [".##", "#..", "###", "#.#", "###"], 7: ["###", "..#", ".#.", ".#.", ".#."], 8: ["###", "#.#", "###", "#.#", "###"],
+  9: ["###", "#.#", "###", "..#", "##."], "-": ["...", "...", "###", "...", "..."], ".": [".", ".", ".", ".", "#"],
+  "'": ["#", "#", ".", ".", "."], " ": ["..", "..", "..", "..", ".."],
+};
+function tiny(text, color) {
+  const rows = ["", "", "", "", ""];
+  [...text].forEach((ch, i) => {
+    const g = TINY[ch] || TINY[" "];
+    for (let y = 0; y < 5; y++) rows[y] += (i ? "." : "") + g[y];
+  });
+  return pix(rows, {"#": color});
+}
 const STAR = pix(["...y...", "...y...", "..yyy..", "yyyyyyy", "..yyy..", "...y...", "...y..."], {y: "#fff8a0"});
 const BAGICON = pix(["..kkkk..", ".kbbbbk.", "kbbwbbbk", "kkkkkkkk", "kwwkwwwk", "kwwwwwwk", ".kwwwwk.", "..kkkk.."],
   {k: "#293941", b: "#bd9c5a", w: "#ffe68b"});
 for (const el of document.querySelectorAll(".hplabel")) el.innerHTML = HP;
+// the bar's rounded right end, the mirror of the one before "HP"
+const HPCAP = pix(["63", "66", "66", "66", "66", "63"], {6: "#526a5a", 3: "#d5cdbd"});
+for (const el of document.querySelectorAll(".hpcap")) el.innerHTML = HPCAP;
 $("explabel").innerHTML = EXP;
 $("more").innerHTML = MORE;
 $("ball").innerHTML = BALL;
@@ -695,6 +742,13 @@ function render() {
   if (["devices", "screen", "log"].includes(panel)) drawPage(f);
 }
 
+// each gradient's own colors, roughly: a run of hues picked from its name
+function gradientColors(name) {
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) % 360;
+  return `linear-gradient(90deg, hsl(${h} 85% 42%), hsl(${(h + 70) % 360} 85% 40%), hsl(${(h + 140) % 360} 85% 38%))`;
+}
+
 function drawFoe(d, s, enc, inBattle, caught) {
   const box = $("foe-hb"), foe = $("foe");
   box.hidden = !(inBattle || caught);
@@ -708,6 +762,17 @@ function drawFoe(d, s, enc, inBattle, caught) {
   st.hidden = !code;
   st.textContent = code;
   st.style.background = STATUS[code] || "#888";
+  // what's special about it, where the game shows it: stars, the reskin under the HP bar, the gradient's tab
+  setHtml($("foe-marks"), (enc.shiny ? SHINY_STAR : "") + (enc.tint ? TINT_STAR : ""));
+  setHtml($("foe-rsk"), enc.reskin ? tiny(UP(enc.reskin), "#6a3a9c") : "");
+  box.classList.toggle("has-rsk", !!enc.reskin);
+  const grad = $("foe-grad"), gname = UP(enc.gradient || "");
+  grad.hidden = !gname;
+  if (gname && grad.dataset.name !== gname) {
+    grad.dataset.name = gname;
+    grad.firstChild.textContent = gname;
+    grad.firstChild.style.backgroundImage = gradientColors(gname);
+  }
   // the game's own sprite (shiny, gradient, reskin); the plain one if it doesn't come
   const game = gameSprite(d, s, enc);
   if (game.url) setMon(foe, game.url, 176, 70);

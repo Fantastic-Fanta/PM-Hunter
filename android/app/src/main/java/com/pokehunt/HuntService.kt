@@ -17,6 +17,7 @@ import android.graphics.drawable.GradientDrawable
 import android.media.AudioManager
 import android.media.RingtoneManager
 import android.media.ToneGenerator
+import android.os.Bundle
 import android.os.Environment
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -26,6 +27,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import com.google.android.gms.tasks.Tasks
@@ -78,6 +80,17 @@ class HuntService : AccessibilityService(), Phone {
             NotificationChannel("website", "Website logins", NotificationManager.IMPORTANCE_HIGH))
         robloxShown = rootInActiveWindow?.packageName == ROBLOX
         updateButton()
+    }
+
+    override fun typeText(text: String): Boolean {
+        val field = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return false
+        if (!field.isEditable) return false
+        val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text) }
+        return field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+    }
+
+    override fun keyboardHidden(hidden: Boolean) {
+        softKeyboardController.showMode = if (hidden) SHOW_MODE_HIDDEN else SHOW_MODE_AUTO
     }
 
     override fun onDestroy() {

@@ -21,6 +21,11 @@ interface Phone {
     /** Text read in area of f, as fractions of area, enlarged first by zoom. */
     fun ocr(f: Frame, area: Box, zoom: Double = 1.0): List<TextHit>
     fun png(f: Frame, area: Box?, maxWidth: Int): ByteArray
+    /** Puts text into the text field that has the focus (Roblox opens a real one
+     *  over a tapped TextBox, like the bag's search box). True if it took. */
+    fun typeText(text: String): Boolean
+    /** Keeps the on-screen keyboard from showing (true), or lets it show again. */
+    fun keyboardHidden(hidden: Boolean)
     /** A JPEG of area of f, for the website. */
     fun jpg(f: Frame, area: Box?, maxWidth: Int): ByteArray
     /** A small JPEG of f with a tap (from) or a swipe (from -> to) marked on it. */
@@ -294,7 +299,13 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
             calSaved = saved != null
         }
         val mute = Vision.findMute(f, hint)
-        mute?.let { phone.placeButton(it) }
+        // the ON / OFF button goes under Mute once the battle screen has settled (while it
+        // slides in, Mute is higher up: a button put under it then ends up covering it)
+        if (mute != null && Vision.menuReady(f, Layout(mute, cal))) phone.placeButton(mute)
+        // covering Mute anyway (put under it mid-slide by an older version): well out of the way, two
+        // Mute heights lower; once Mute shows on a settled screen the button goes right under it
+        else if (mute == null && hint != null && phone.buttonBox()?.overlaps(Box(hint.l, hint.t, hint.r, hint.b + 2 * hint.h)) == true)
+            phone.placeButton(Box(hint.l, hint.t, hint.r, hint.b + 2 * hint.h))
         return f to mute?.let { Layout(it, cal) }
     }
 
@@ -424,9 +435,9 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
     }
 
     /** Bag -> tab -> item -> Use, and -> party member when the item asks for
-     *  one. An item not in sight is scrolled to (favorites and the search box
-     *  don't work on a phone). True once used; on failure the backpack is
-     *  closed again. */
+     *  one. The item is searched for (its name typed into the search box, the
+     *  keyboard kept hidden), or scrolled to when typing fails. True once used;
+     *  on failure the backpack is closed again. */
     private var chatClosedAt = 0.0
 
     /** Roblox opens its chat window when messages come in, and on a phone it
@@ -460,6 +471,16 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
     }
 
     private fun useItem(lay: Layout, tab: String, item: String, target: String? = null): Boolean {
+        // the bag's search box would bring up the keyboard, which on a phone covers the list
+        phone.keyboardHidden(true)
+        try {
+            return useItemIn(lay, tab, item, target)
+        } finally {
+            phone.keyboardHidden(false)
+        }
+    }
+
+    private fun useItemIn(lay: Layout, tab: String, item: String, target: String?): Boolean {
         ensureBattle(lay)
         trace("bag: opening it for $item")
         tap(lay.pt(Ref.BAG))
@@ -512,9 +533,32 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
                     trace("bag: $tab tab at (${it.x.toInt()}, ${it.y.toInt()})" +
                          if (texts.any { t -> t === it }) "" else ", worked out from the tabs around it")
                     tap(it)
-                    step = "item"
+                    step = "search"
                     tabAt = now()
                     tabHit = it
+                }
+                // the search box, right of the list's names: typing the item's name
+                // leaves just its row (scrolling for it is the way when that fails)
+                "search" -> if (now() - tabAt > 0.6) {
+                    val close = texts.firstOrNull { it.text.equals("close", true) }
+                    val count = Regex("x[\\d,.]+", RegexOption.IGNORE_CASE)
+                    val rows = texts.filter { count.matches(it.text) }.minOfOrNull { it.y }
+                    val box = texts.filter {
+                        it.x > split && it !== close && !count.matches(it.text) &&
+                            (close == null || it.y > close.y + 20 * v) && (rows == null || it.y < rows - 20 * v)
+                    }.minByOrNull { it.y }
+                    if (box != null) {
+                        tap(box)
+                        nap(0.5)
+                        val typed = phone.typeText(item) || run { nap(0.6); phone.typeText(item) }
+                        trace(if (typed) "bag: searching for $item" else "bag: couldn't type into the search box: scrolling")
+                        searched = typed
+                        step = "item"
+                        tabAt = now()
+                    } else if (now() - tabAt > 2.5) {
+                        trace("bag: no search box seen: scrolling")
+                        step = "item"
+                    }
                 }
                 "item" -> {
                     // exact names: "Dive Ball" and "Dream Ball" are one misread apart
@@ -543,8 +587,8 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
                         lastRowY = null
                         if (!searched) {
                             searched = true
-                            // a search left in the box hides everything else; typing
-                            // into it from here doesn't work on a phone
+                            // a search left in the box hides everything else (this one
+                            // couldn't be typed over)
                             texts.firstOrNull {
                                 it.x > split && it.text == it.text.uppercase() && Regex("[A-Z]{2}").containsMatchIn(it.text)
                             }?.let { Log.say("  (the bag's search box says \"${it.text}\": clear it in Roblox, it hides the rest)") }
@@ -569,6 +613,7 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
                         tap(use)
                         if (target == null) return true
                         step = "target"
+                        end = maxOf(end, now() + 6)  // the party screen takes a moment to come up
                     } else if (named.isNotEmpty() || now() - pickedAt > 2.5) {
                         val shown = named.minByOrNull { it.y }?.text ?: "nothing"
                         if (++picks > 3) {

@@ -75,7 +75,7 @@ async def main():
                 s["msg"] = ""
                 s["count"] += 1
                 s["enc"] = {"species": "Dewpider", "level": "54", "shiny": random.random() < .2, "tint": False,
-                            "reskin": "", "gradient": random.choice(["", "", "Mirage"]), "status": ""}
+                            "reskin": random.choice(["", "WIZARD"]), "gradient": random.choice(["", "Mirage"]), "status": ""}
                 lead["hp"] = random.randint(200, 376)
                 say(f"#{s['count']} {s['enc']['species']} Lv54, lead HP {lead['hp']}")
                 if PICTURE:

@@ -1127,6 +1127,7 @@ def use_item(lay, tab, item, target=None):
                 if not target:
                     return True
                 step = "target"
+                end = max(end, time.time() + 6)  # the party screen takes a moment to come up
             elif named or time.time() - picked_at > 2.5:
                 shown = min(named, key=lambda n: n[1])[0] if named else "nothing"
                 picks += 1

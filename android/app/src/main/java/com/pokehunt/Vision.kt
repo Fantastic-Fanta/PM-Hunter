@@ -61,6 +61,7 @@ class Frame(val width: Int, val height: Int, val px: IntArray) {
 data class Box(val l: Int, val t: Int, val r: Int, val b: Int) {
     val w get() = r - l
     val h get() = b - t
+    fun overlaps(o: Box) = l < o.r && o.l < r && t < o.b && o.t < b
 }
 
 data class Pt(val x: Double, val y: Double)
