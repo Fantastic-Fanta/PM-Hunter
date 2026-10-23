@@ -37,6 +37,7 @@ if WINDOWS:
 else:
     DATA = os.environ.get("HUNT_DATA") or HERE
 CONFIG = os.path.join(DATA, "config.json")
+LOG = os.path.join(DATA, "hunt.log")  # what the hunter prints; hunt.old.log before it
 SETTINGS = os.path.join(DATA, "window.json")
 SITE = os.environ.get("HUNT_SITE", "https://poopihunt.xyz")
 UPDATES = SITE + "/windows.json"  # {"version": 29105678, "name": "23 Oct 18:02", "file": "HuntSetup.exe", "sha256": ...}
@@ -74,74 +75,6 @@ def save_json(path, data):
     os.replace(tmp, path)
 
 
-# the hunter's lines, for the log: an encounter, and what only matters when something's wrong
-ENCOUNTER = re.compile(r"^(\d\d:\d\d):\d\d\s+#\d+\s+(.+?)\s+(run|catch|WANTED!|website|practice|-)$")
-NOISE = re.compile(r"^(waiting for an encounter|\(anti-AFK click\)|\(bringing Roblox|\(game saved\)|throwing a |"
-                   r"wanted:|auto-catch:|post only:|Ctrl\+Shift|Quit:|pokehunt (hunting|watching)|debug mode:)"
-                   r"|\(x[\d,]+ in the bag\)$")
-ACTIONS = {"catch": "catching", "WANTED!": "found", "website": "on the website", "practice": "practice"}
-
-
-def tidy(line):
-    """A line the hunter printed, as the log shows it: [(text, style)], or None
-    when it's left out (Show everything has those)."""
-    s = line.strip()
-    m = ENCOUNTER.match(s)
-    if m:
-        time_, what, act = m.groups()
-        name, _, extras = what.partition("  (")
-        words = [name[0].upper() + name[1:]]
-        for extra in filter(None, extras.rstrip(")").split(", ")):
-            kind, _, value = extra.partition(" ")
-            words.append(f"{value.title() if value.isupper() else value} {kind}" if value else kind)
-        out = [(time_ + "   ", "dim"), ("  ·  ".join(words), "ink")]
-        if act in ACTIONS:
-            out.append(("   " + ACTIONS[act], "bold"))
-        return out
-    if not s or NOISE.search(s):
-        return None
-    m = re.match(r"catch: (\w+)(?: \((\d+) ball\(s\), last ([^,]+).*\))?", s)
-    if m:
-        outcome, balls, last = m.groups()
-        said = outcome.capitalize()
-        if balls:
-            said += f" with a {last}" if balls == "1" else f" with {balls} balls, the last a {last}"
-        return [("        " + said, "bold")]
-    if s.startswith("--- "):
-        return [("\n" + s[4:], "dim")]
-    if s.startswith(("|| paused", ">> hunting", ">> watching")):
-        return [("Paused", "dim")] if s.startswith("||") else None
-    s = re.sub(r",? ?screenshot: [^)]*", "", s)
-    if s.startswith("(") and s.endswith(")"):
-        s = s[1:-1]
-    return [("        " + s if line.startswith(" ") else s, "dim" if line.startswith(" ") else "ink")]
-
-
-class Check(tk.Frame):
-    """A black and white checkbox."""
-
-    def __init__(self, parent, text, var):
-        super().__init__(parent, bg=PAPER, cursor="hand2")
-        self.var, self.n = var, round(16 * max(1.0, parent.winfo_fpixels("1i") / 96))
-        self.box = tk.Canvas(self, width=self.n, height=self.n, bg=PAPER, highlightthickness=0, cursor="hand2")
-        self.box.pack(side="left")
-        words = tk.Label(self, text=text, bg=PAPER, fg=INK, font=(FONT, 10), cursor="hand2")
-        words.pack(side="left", padx=(8, 0))
-        for w in (self, self.box, words):
-            w.bind("<Button-1>", lambda e: self.var.set(not self.var.get()))
-        var.trace_add("write", lambda *a: self.paint())
-        self.paint()
-
-    def paint(self):
-        c, n = self.box, self.n
-        c.delete("all")
-        if self.var.get():
-            c.create_rectangle(1, 1, n - 1, n - 1, fill=INK, outline=INK)
-            c.create_line(n * .25, n * .5, n * .43, n * .68, n * .76, n * .32, fill=PAPER, width=max(2, n // 8))
-        else:
-            c.create_rectangle(1, 1, n - 1, n - 1, fill=PAPER, outline=GREY)
-
-
 class Hunt:
     def __init__(self, root):
         self.root = root
@@ -157,8 +90,13 @@ class Hunt:
         self.update_pending = False
         self.setup = None         # the downloaded installer
         self.note = ""            # what the pill says instead, while an update downloads
-        self.raw = []             # what the hunter printed, for the log
         os.makedirs(DATA, exist_ok=True)
+        try:
+            if os.path.getsize(LOG) > 5 << 20:
+                os.replace(LOG, os.path.join(DATA, "hunt.old.log"))
+        except OSError:
+            pass
+        self.log = open(LOG, "a", encoding="utf-8")
         if not os.path.exists(CONFIG):  # no rules: every reskin with a gradient is caught all the same
             save_json(CONFIG, {"webhook": "", "ping": "@here", "targets": [], "notify": []})
         self.build()
@@ -214,30 +152,11 @@ class Hunt:
         c.tag_bind("drag", "<B1-Motion>", self.drag)
         c.tag_bind("drag", "<ButtonRelease-1>", self.drag_end)
 
-        self.log_win = tk.Toplevel(root, bg=PAPER)
-        self.log_win.title("Hunt log")
-        self.log_win.withdraw()
-        self.log_win.protocol("WM_DELETE_WINDOW", lambda: (self.show_log.set(False), self.toggle_log()))
-        self.everything = tk.BooleanVar(value=False)
-        bar = tk.Frame(self.log_win, bg=PAPER, padx=24, pady=12)
-        bar.pack(side="bottom", fill="x")
-        Check(bar, "Show everything", self.everything).pack(side="left")
-        self.everything.trace_add("write", lambda *a: self.fill_log())
-        self.log = tk.Text(self.log_win, height=24, width=72, bg=PAPER, fg=INK, relief="flat", font=(FONT, 10),
-                           wrap="word", padx=24, pady=18, spacing1=2, spacing3=2, highlightthickness=0,
-                           state="disabled", selectbackground=LINE, selectforeground=INK)
-        for style, kw in (("dim", {"foreground": GREY}), ("ink", {"foreground": INK}),
-                          ("bold", {"font": (FONT, 10, "bold")}), ("raw", {"font": (MONO, 9)})):
-            self.log.tag_config(style, **kw)
-        self.log.pack(fill="both", expand=True)
-
         self.watch = tk.BooleanVar(value=False)
-        self.show_log = tk.BooleanVar(value=False)
         self.reports = tk.BooleanVar(value=self.settings.get("reports", True))
         menu = tk.Menu(root, tearoff=0)
         menu.add_command(label="Finds", command=lambda: self.open_folder("finds"))
         menu.add_checkbutton(label="Watch only (never clicks)", variable=self.watch)
-        menu.add_checkbutton(label="Log", variable=self.show_log, command=self.toggle_log)
         menu.add_separator()
         menu.add_command(label="New website code", command=lambda: self.send("code"))
         menu.add_command(label="Log out every browser", command=self.log_out_browsers)
@@ -291,13 +210,6 @@ class Hunt:
                  "code": "Open the website" if self.code else "Connecting to the website"}
         item, room = self.sub_item
         c.itemconfig(item, text=self.fit(hints.get(tag) or self.sub, self.sub_font, room) if room > 0 else "")
-
-    def toggle_log(self):
-        if self.show_log.get():
-            self.log_win.deiconify()
-            self.log_win.lift()
-        else:
-            self.log_win.withdraw()
 
     def more(self):
         x, y = self.root.winfo_rootx() + self.W - round(40 * self.u), self.root.winfo_rooty() + self.H
@@ -456,8 +368,7 @@ class Hunt:
             messagebox.showerror("Hunt", f"Couldn't start the hunter: {e}")
             return
         self.mode, self.state, self.code, self.last_exit = mode, {}, "", None
-        self.add_line(f"--- {time.strftime('%H:%M')}  " + {"hunt": "Hunting", "watch": "Watching", "debug": "Test catching",
-                      "diagnose": "Checking this PC", "calibrate": "Fitting the layout"}[mode])
+        self.add_line(f"\n--- {time.strftime('%Y-%m-%d %H:%M:%S')} {mode} (build {NAME}) ---")
         threading.Thread(target=self.read, args=(self.proc,), daemon=True).start()
         self.show_state()
 
@@ -543,13 +454,9 @@ class Hunt:
     def ended(self, proc):
         code = proc.returncode
         if self.mode == "diagnose":
-            self.last_exit = ("Check done", "see the log")
-            self.show_log.set(True)
-            self.toggle_log()
+            self.last_exit = ("Check done", "in hunt.log")
         elif code not in (0, None) and self.last_line and "stopped" not in self.last_line:
-            self.last_exit = ("Stopped", "".join(t for t, _ in tidy(self.last_line) or []).strip() or self.last_line)
-            self.show_log.set(True)
-            self.toggle_log()
+            self.last_exit = ("Stopped", self.last_line)
         else:
             self.last_exit = ("Stopped", "")
         self.proc, self.state, self.code = None, {}, ""
@@ -560,34 +467,11 @@ class Hunt:
         if not line.strip():
             return
         self.last_line = line.strip()
-        self.raw.append(line)
-        if len(self.raw) > 3000:
-            del self.raw[:1000]
-            self.fill_log()
-        else:
-            self.write_log(line)
-
-    def write_log(self, line):
-        parts = [(line, "raw")] if self.everything.get() else tidy(line)
-        if not parts:
-            return
-        log = self.log
-        following = log.yview()[1] > 0.99  # unless it's been scrolled back
-        log.config(state="normal")
-        for text, style in parts:
-            log.insert("end", text, style)
-        log.insert("end", "\n")
-        log.config(state="disabled")
-        if following:
-            log.see("end")
-
-    def fill_log(self):
-        self.log.config(state="normal")
-        self.log.delete("1.0", "end")
-        self.log.config(state="disabled")
-        for line in self.raw:
-            self.write_log(line)
-        self.log.see("end")
+        try:
+            self.log.write(line + "\n")
+            self.log.flush()
+        except OSError:
+            pass
 
     def close(self):
         if self.proc is not None:
@@ -707,7 +591,7 @@ def main():
 
 def smoke(hunt):
     """The Windows build's check (--smoke): the pill comes up and goes through
-    every state, the menu and the log, then Hunt closes. Anything
+    every state and the menu, then Hunt closes. Anything
     that went wrong is in smoke.txt, and Hunt.exe ends with 1."""
     root, errors = hunt.root, []
     root.report_callback_exception = lambda *exc: errors.append("".join(traceback.format_exception(*exc)))
@@ -730,14 +614,10 @@ def smoke(hunt):
         hunt.proc = None
         hunt.show_state()
         hunt.offer_update({"version": VERSION + 1, "name": "smoke"})
-        hunt.show_log.set(True)
-        hunt.toggle_log()
         for line in ("11:38:34  #60   Marill Lv51  (reskin KYOBLOXER, gradient IMPULSIVE BEAST) catch",
                      "  catch: caught (1 ball(s), last Quick Ball, 1 turns)", "|| paused (Ctrl+Shift+H to resume)",
                      "  (no encounter for 31 min, screenshot: C:\\Hunt\\debug\\x.png)", "waiting for an encounter..."):
             hunt.add_line(line)
-        hunt.everything.set(True)
-        hunt.everything.set(False)
         root.update()
         size = f"ok: the pill is {root.winfo_width()} x {root.winfo_height()} at {root.winfo_x()}, {root.winfo_y()}\n"
     except Exception:

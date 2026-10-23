@@ -29,13 +29,13 @@ info > Run anyway**) because the installer isn't signed.
 
 The window (`app.py`, Hunt.exe) is a pill with no frame, dragged by its
 words: what it's doing, the website code (click it for the website), start /
-pause, stop, and **•••** for everything else: **Finds**, **Watch only**, the log (encounters and catches; **Show everything**
-for all the hunter printed), Check this PC, Test catching, fit the layout
+pause, stop, and **•••** for everything else: **Finds**, **Watch only**, Check this PC, Test catching, fit the layout
 again, **Send problem reports** and Close. A find turns it white. The
 hunter itself is pokehunt.py
 (hunt-engine.exe), run by the window with `--window`. What a PC keeps
 (config.json, finds, calibration, the website key) is in `%LOCALAPPDATA%\Hunt`
-(**••• > Open Hunt's folder**). The window has no settings for what to hunt: a
+(**••• > Open Hunt's folder**), with hunt.log: all the hunter printed (hunt.old.log
+past 5 MB). The window has no settings or log of its own: a
 new config.json has no rules, so every reskin with a gradient is caught, and
 anything more (targets, a webhook, the catch plan) is edited in that file.
 Hunt checks https://poopihunt.xyz/windows.json when it starts (and every 6
