@@ -30,9 +30,11 @@ info > Run anyway**) because the installer isn't signed.
 The window (Hunt.exe, Rust: `window/`, egui) is one pill with no frame, on top
 of every window but out of screenshots (the hunter's look through it), dragged
 anywhere: start / stop (play again after a find or Ctrl+Shift+H carries on; a
-right click is **Debug mode**: it hunts at once, fits the layout at the next
-encounter, catches that one with a screenshot every turn and saves, then turns
-itself off), the website code (there from the start: the hunter runs paused
+right click is **Debug mode**: it hunts at once, and at the next encounter fits
+the layout, throws a Quick Ball (Yawn with the Yawn user), runs, uses the
+favorited heal and PP items from MENU > Bag, saves, each step to the debug
+channel; then it turns itself off and hunts on, or pauses if a step went
+wrong), the website code (there from the start: the hunter runs paused
 from when Hunt opens; click it for the website), a box for the Discord
 webhook (saved in config.json; a hunt that's on starts again with it), Hunt's
 folder and quit. It opens with Clodsire (`windows/hunt-icon.png`) big in the

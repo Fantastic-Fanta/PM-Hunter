@@ -618,8 +618,9 @@ impl Hunt {
 
     /// Debug mode (a right click on play): it hunts at once, fits the layout
     /// again at the next encounter (drawn for the developer), catches that one
-    /// with a screenshot every turn and saves, then turns itself off and hunts
-    /// on. A right click while it's on calls it off.
+    /// with a screenshot every turn and saves, then turns itself off: it hunts
+    /// on if every step went right, pauses if one didn't. A right click while
+    /// it's on calls it off.
     fn debug_run(&mut self) {
         if env::var_os("HUNT_PREVIEW").is_some() {
             self.test = !self.test; // a look at the window: the ring, but its hunter stays paused

@@ -149,12 +149,12 @@ class Desktop:
         s = self._s()
         pg = _pyautogui()
         pg.moveTo(x / s - 2, y / s)
-        time.sleep(0.05)
+        time.sleep(0.03)
         pg.moveTo(x / s, y / s)
-        time.sleep(0.12)
+        time.sleep(0.05)
         button = "right" if right else "left"
-        pg.mouseDown(button=button); time.sleep(0.08); pg.mouseUp(button=button)
-        time.sleep(0.1)
+        pg.mouseDown(button=button); time.sleep(0.04); pg.mouseUp(button=button)
+        time.sleep(0.03)
 
     def move(self, x, y):
         if WINDOWS:
@@ -332,17 +332,17 @@ def _win_check_corner():
 def _win_click(x, y, right=False):
     _win_check_corner()
     _win_move_to(x - 3, y)
-    time.sleep(0.05)
-    _win_nudge(2, 0)   # relative moves: Roblox sees these as the mouse moving
     time.sleep(0.03)
+    _win_nudge(2, 0)   # relative moves: Roblox sees these as the mouse moving
+    time.sleep(0.02)
     _win_move_to(x, y)
     _win_nudge(1, 0)
     _win_nudge(-1, 0)
-    time.sleep(0.12)
+    time.sleep(0.05)
     _send(_mouse(_RIGHTDOWN if right else _LEFTDOWN))
-    time.sleep(0.08)
+    time.sleep(0.04)
     _send(_mouse(_RIGHTUP if right else _LEFTUP))
-    time.sleep(0.1)
+    time.sleep(0.03)
 
 
 def _key(vk=0, scan=0, flags=0):

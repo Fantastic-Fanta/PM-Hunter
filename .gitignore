@@ -5,6 +5,7 @@ config.json
 
 # this computer's runs
 calibration.json
+menu.json
 encounters.csv
 finds/
 debug/

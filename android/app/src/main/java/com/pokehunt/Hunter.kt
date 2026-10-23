@@ -512,6 +512,7 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
         var tabAt = 0.0
         var tabHit: TextHit? = null
         var lastRowY: Double? = null  // where the row was on the screenshot before
+        var lastTitle: TextHit? = null  // the bag's "Backpack", on the screenshot before
         var pickedAt = 0.0
         var picks = 0
         var searched = false
@@ -549,6 +550,13 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
                 step = "tab"
                 continue
             }
+            // the bag floats up as it opens: nothing's tapped while its title is still moving
+            // (a tap lands where the tab was a moment ago)
+            val title = texts.firstOrNull { it.text.equals("backpack", true) }
+            val moved = title != null && lastTitle != null &&
+                Math.abs(title.x - lastTitle!!.x) + Math.abs(title.y - lastTitle!!.y) > 4
+            lastTitle = title
+            if (moved && step != "target") continue
             when (step) {
                 "tab" -> Reader.findTab(texts, tab, split, img.width)?.let {
                     trace("bag: $tab tab at (${it.x.toInt()}, ${it.y.toInt()})" +

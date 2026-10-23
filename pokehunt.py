@@ -1078,7 +1078,9 @@ def remote_battle(cfg, enc, img, lay):
 
 SAVE_EVERY = 125    # s; the game allows one save every 2 minutes
 GONE_AFTER = 1.0    # s without the Mute button before an encounter counts as over
-SEEN_AFTER = 0.4    # s with the Mute button before it counts as started
+POLL = 0.15         # s between looks while waiting on the game's screens (a read takes ~0.15 s more)
+SEEN_AFTER = 0.0    # s with the Mute button before it counts as started (reading waits for its menu,
+                    # and for two reads that agree, so a stray red patch doesn't get far)
 
 
 STEADY = ("species", "level", "reskin", "gradient", "status")
@@ -1147,6 +1149,9 @@ def read_encounter(hint, clicks=False, draw=False):
             move_mouse(*lay.pt(*IDLE_SPOT))
             chat_click, chat_clicks = time.time(), chat_clicks + 1
         readable = menu and not chat and box_visible(rgb, lay)
+        if timing[0]:
+            trace(f"read: {'menu' if menu else 'no menu yet'}{', chat' if chat else ''}"
+                  f"{'' if readable or not menu else ', box covered'}")
         if time.time() - cal_at > 2 and (draw or not cal.get("saved") or
                                          (not readable and time.time() - start > 3)):
             cal_at = time.time()
@@ -1156,6 +1161,8 @@ def read_encounter(hint, clicks=False, draw=False):
         if readable:
             reads = reads[-7:] + [read_enemy(img, rgb, lay)]
             enc = settled(reads)
+            if timing[0]:
+                trace(f"read: {describe(reads[-1])}{' (agrees: done)' if enc else ''}")
             if enc:
                 return enc, img, lay
         if time.time() - start > 15 and not saved:
@@ -1167,12 +1174,14 @@ def read_encounter(hint, clicks=False, draw=False):
         if clicks and time.time() - last_click[0] > AFK_EVERY:  # waiting for you: Roblox kicks at 20 min
             click_at(*lay.pt(*AFK_SPOT))
             say("  (anti-AFK click)")
-        time.sleep(0.2)
+        if not readable:
+            time.sleep(0.1)  # (a read again at once: the next frame's, to agree with)
 
 
-def run_away(lay, for_website=False):
-    """Clicks Run (again if the escape failed) until the encounter is over.
-    Stops (False) when the website takes over, unless it's the website's Run."""
+def run_away(lay, for_website=False, gone_after=0.5):
+    """Clicks Run (again if the escape failed) until the encounter is over (gone_after s
+    without the Mute button). Stops (False) when the website takes over, unless it's
+    the website's Run."""
     clicked, gone, start = 0.0, None, time.time()
     while time.time() - start < 20:
         wait_running()
@@ -1181,7 +1190,7 @@ def run_away(lay, for_website=False):
         img, rgb, now = look(lay.mute)
         if not now:
             gone = gone or time.time()
-            if time.time() - gone > GONE_AFTER:
+            if time.time() - gone > gone_after:
                 return True
         else:
             gone, lay = None, now
@@ -1263,8 +1272,55 @@ def close_bag(texts):
 
 
 def trace(msg):
-    """A step of a catch, for following it in the log."""
-    print(f"    {msg}", flush=True)
+    """A step of a catch, for following it in the log (in a debug run, with its time)."""
+    print(f"    {f'+{timing[0].at():6.2f}  ' if timing[0] else ''}{msg}", flush=True)
+
+
+timing = [None]  # a debug run's Timing
+
+
+class Timing:
+    """A debug run's time, added up per step: the screen's grabs, text read, looks for
+    Mute, clicks, and the waits (time.sleep), on the hunt's own thread."""
+    WATCH = ("grab", "ocr", "load_rgb", "find_mute", "click_at")
+
+    def __enter__(self):
+        self.t0 = self.mark = time.monotonic()
+        self.spent, self.depth, self.main = {}, 0, threading.current_thread()
+        g = globals()
+        self.saved = {n: g[n] for n in self.WATCH}
+        g.update({n: self.wrap(n, f) for n, f in self.saved.items()})
+        self.sleep, time.sleep = time.sleep, self.wrap("sleep", time.sleep)
+        timing[0] = self
+        return self
+
+    def __exit__(self, *exc):
+        globals().update(self.saved)
+        time.sleep, timing[0] = self.sleep, None
+
+    def wrap(self, name, f):
+        def timed(*a, **k):
+            if threading.current_thread() is not self.main or self.depth:
+                return f(*a, **k)  # (another thread's, or inside one counted already)
+            self.depth, start = 1, time.monotonic()
+            try:
+                return f(*a, **k)
+            finally:
+                self.depth = 0
+                n, t = self.spent.get(name, (0, 0.0))
+                self.spent[name] = (n + 1, t + time.monotonic() - start)
+        return timed
+
+    def at(self):
+        return time.monotonic() - self.t0
+
+    def lap(self):
+        """Since the last: "2.31 s: ocr 1.20 (2), sleep 0.60 (4), grab 0.41 (9), ..."."""
+        now = time.monotonic()
+        total, spent = now - self.mark, sorted(self.spent.items(), key=lambda kv: -kv[1][1])
+        rest = total - sum(t for _, t in self.spent.values())
+        self.mark, self.spent = now, {}
+        return f"{total:.2f} s: " + ", ".join([f"{n} {t:.2f} ({c})" for n, (c, t) in spent] + [f"the rest {rest:.2f}"])
 
 
 class BattleOver(Exception):
@@ -1279,7 +1335,7 @@ def ensure_battle(lay):
         img, rgb, now = look(lay.mute)
         if now and menu_ready(rgb, now):
             return
-        time.sleep(0.4)
+        time.sleep(POLL)
     raise BattleOver()
 
 
@@ -1336,6 +1392,15 @@ def search_box(texts, split, v):
                  and not re.fullmatch(r"x[\d,.]+", t)), None)
 
 
+def bag_still(texts, before):
+    """The bag's stopped moving (it floats up as it opens): its "Backpack" title read in
+    this read and the one before, in the same place."""
+    def title(ts):
+        return next(((x, y) for t, x, y in ts if norm(t) == "backpack"), None)
+    now, was = title(texts), title(before)
+    return bool(now and was) and abs(now[0] - was[0]) + abs(now[1] - was[1]) <= 4
+
+
 def use_item(lay, tab, item, target=None, prefer=None, in_battle=True):
     """Bag -> tab -> item -> Use, and -> party member when the item asks for
     one. Favorited items sit at the top of their tab; anything else is
@@ -1356,22 +1421,26 @@ def use_item(lay, tab, item, target=None, prefer=None, in_battle=True):
     texts, img = [], None
     end = time.time() + 12
     while time.time() < end:
-        time.sleep(0.4)
-        img = grab()
+        if in_battle or img:
+            time.sleep(POLL)
+        img, before = grab(), texts
         texts = screen_texts(img)
+        if step != "target" and not bag_still(texts, before):
+            continue  # nothing's clicked till it stops (a click lands where the tab was a moment ago)
         if step == "tab":
             # the bag opens on the tab it was left on: the item in sight there, no click
             names = {norm(item)} | ({norm(prefer)} if prefer else set())
             if any(norm(t) in names and x < split for t, x, y in texts):
                 trace(f"bag: {item} is in sight already")
-                step, tab_at = "item", time.time()
+                step, tab_at = "item", time.time()  # (and on with this read)
+            else:
+                hit = find_tab(texts, tab, split, img.width)
+                if hit:
+                    trace(f"bag: {tab} tab at ({hit[0]:.0f}, {hit[1]:.0f})")
+                    click_at(*hit)
+                    step, tab_at = "item", time.time()
                 continue
-            hit = find_tab(texts, tab, split, img.width)
-            if hit:
-                trace(f"bag: {tab} tab at ({hit[0]:.0f}, {hit[1]:.0f})")
-                click_at(*hit)
-                step, tab_at = "item", time.time()
-        elif step == "item":
+        if step == "item":
             if looking != "done":
                 # favorites are at the top, but more than a screenful hides some: then it's searched for
                 rows = sorted(y for t, x, y in texts if same_word(prefer, t) and x < split)
@@ -1431,7 +1500,7 @@ def use_item(lay, tab, item, target=None, prefer=None, in_battle=True):
                     return item
                 step = "target"
                 end = max(end, time.time() + 6)  # the party screen takes a moment to come up
-            elif named or time.time() - picked_at > 2.5:
+            elif (named and time.time() - picked_at > 0.8) or time.time() - picked_at > 2.5:
                 shown = min(named, key=lambda n: n[1])[0] if named else "nothing"
                 picks += 1
                 if picks > 3:
@@ -1464,7 +1533,7 @@ def use_move(lay, move):
     move_mouse(*lay.pt(*IDLE_SPOT))
     end = time.time() + 6
     while time.time() < end:
-        time.sleep(0.4)
+        time.sleep(POLL)
         texts = screen_texts(grab())
         hit = next(((x, y) for t, x, y in texts if t.lower() == move.lower()), None)
         if not hit:
@@ -1503,7 +1572,7 @@ def wait_turn(lay):
     start, seen, gone, msgs = time.time(), False, None, []
     img = rgb = None
     while time.time() - start < TURN_TIMEOUT:
-        time.sleep(0.25)
+        time.sleep(POLL)
         img, rgb, now = look(lay.mute)
         if not now:  # backpack or party screen still up, or the battle is over
             if seen:
@@ -1677,6 +1746,8 @@ def save_game(wait=0.0):
     how long. wait: s to look for MENU's tab in. MENU and Save are clicked at once
     where they were last (quick_menu), read otherwise."""
     step, saved, shown, saved_at, tries, tab, tab_at = "save", False, False, 0.0, 0, None, 0.0
+    if find_mute(load_rgb(grab())):
+        return False  # an encounter's on: not now
     quick = quick_menu("save", "save")
     if quick:
         step, saved_at = "message", time.time()
@@ -1689,7 +1760,7 @@ def save_game(wait=0.0):
         tab_at = time.time()
     end = time.time() + 20
     while time.time() < end:
-        time.sleep(0.4)
+        time.sleep(POLL)
         img = grab()
         texts = screen_texts(img)
         if step == "save":
@@ -1721,7 +1792,7 @@ def save_game(wait=0.0):
                 saved = saved or "successful" in msg[0].lower()
                 shown = True
                 click_at(msg[1], msg[2])
-                time.sleep(0.6)
+                time.sleep(0.3)
             elif shown:  # the message was there and is gone now
                 step = "close"
             elif time.time() - saved_at > (2.5 if quick and not tries else 4) and tries < 2:  # Save didn't take
@@ -1768,30 +1839,66 @@ def menu_tab(seconds=0.0):
         tab = None if battle else next(((x, y) for t, x, y in screen_texts(img) if norm(t) == "menu"), None)
         if tab or time.time() >= end:
             return tab
-        time.sleep(0.3)
+        time.sleep(POLL)
 
 
-# Where MENU's tab, its Bag and its Save were last clicked, by screen size: clicked at
-# once the next time (an encounter can come in the second it takes to read them again)
+# Where MENU's tab, its Bag and its Save were last clicked, by screen size (kept in
+# menu.json): clicked at once the next time (an encounter can come in the second it
+# takes to read them again)
+MENU_FILE = os.path.join(DATA, "menu.json")
 menu_spots = {}
+
+
+def menu_spot(size, name):
+    if not menu_spots:
+        try:
+            with open(MENU_FILE) as f:
+                menu_spots.update(json.load(f))
+        except (OSError, ValueError):
+            menu_spots["-"] = {}
+    return menu_spots.get("%dx%d" % size, {}).get(name)
 
 
 def remember_menu(img, texts, tab):
     """MENU's tab (if it was read) and every item in the open MENU, for quick_menu."""
+    menu_spot(img.size, "menu")  # (what's saved, first)
+    spots = menu_spots.setdefault("%dx%d" % img.size, {})
     if tab:
-        menu_spots[(img.size, "menu")] = tab
+        spots["menu"] = list(tab)
+        spots["menu_look"] = tab_look(load_rgb(img), tab)
     for t, x, y in texts:
         if norm(t) in ("bag", "save"):
-            menu_spots[(img.size, norm(t))] = menu_button((x, y), texts, retry=False)
+            spots[norm(t)] = list(menu_button((x, y), texts, retry=False))
+    try:
+        with open(MENU_FILE, "w") as f:
+            json.dump({k: v for k, v in menu_spots.items() if k != "-"}, f)
+    except OSError:
+        pass
+
+
+def tab_look(rgb, tab):
+    """MENU's tab, as it looks: its patch's mean color (the game's back once it's this)."""
+    x, y, r = int(tab[0]), int(tab[1]), 8
+    return [round(float(c), 1) for c in rgb[max(0, y - r):y + r, max(0, x - r):x + r].reshape(-1, 3).mean(axis=0)]
 
 
 def quick_menu(item, why):
     """MENU's tab, then item ("bag", "save"), at once where they were last; True if both
     were known (whether it worked shows in what comes next: the bag, the message)."""
     img = grab()
-    tab, at = menu_spots.get((img.size, "menu")), menu_spots.get((img.size, item))
+    tab, at = menu_spot(img.size, "menu"), menu_spot(img.size, item)
     if not (tab and at) or find_mute(load_rgb(img)):
         return False
+    looks = menu_spot(img.size, "menu_look")
+    end = time.time() + 3  # the battle fading out: MENU's tab back as it looks first
+    while looks and time.time() < end:
+        rgb = load_rgb(img)
+        if find_mute(rgb):
+            return False
+        if np.abs(np.subtract(tab_look(rgb, tab), looks)).max() < 20:
+            break
+        time.sleep(0.08)
+        img = grab()
     trace(f"{why}: MENU and {item.title()} where they were")
     click_at(*tab)
     time.sleep(0.35)
@@ -1817,8 +1924,13 @@ def open_bag(why):
     end = time.time() + 12  # out of the battle first (its last words can take seconds): watched, not read
     while time.time() < end and find_mute(load_rgb(grab())):
         time.sleep(0.15)
-    if quick_menu("bag", why) and bag_up(2.5):
-        return True
+    for _ in range(2):  # (right as the battle fades out the game can miss the clicks: again)
+        if not quick_menu("bag", why):
+            break
+        if bag_up(1.5):
+            return True
+        if menu_open(screen_texts(grab())):
+            break  # MENU took it, Bag didn't: Bag, read
     texts = screen_texts(grab())
     tab = None
     if not menu_open(texts):
@@ -1861,11 +1973,13 @@ def favorites_in_bag(lay, tab, items):
     """The bag's open: whether tab's items are favorites (at its top, a yellow tag),
     without changing any. {item: True / False}; False too for one not in sight."""
     split = lay.pt(BAG_SPLIT, 0)[0]
-    seen, tabbed, end = {}, False, time.time() + 8
+    seen, tabbed, end, texts = {}, False, time.time() + 8, []
     while time.time() < end:
-        time.sleep(0.4)
-        img = grab()
+        time.sleep(POLL)
+        img, before = grab(), texts
         rgb, texts = load_rgb(img), screen_texts(img)
+        if not bag_still(texts, before):
+            continue  # (still floating up)
         if not tabbed:
             hit = find_tab(texts, tab, split, img.width)
             if hit:
@@ -1886,10 +2000,11 @@ def back_to_bag(seconds=8.0):
     """After an item outside battle: what the game said ("... HP was restored", "It
     won't have any effect"), clicked away, and the party screen Cancelled if it
     stays, till the bag's list is back. What it said, or ""."""
-    said, end = "", time.time() + seconds
+    said, end, cancelled = "", time.time() + seconds, 0.0
     while time.time() < end:
-        time.sleep(0.4)
+        time.sleep(POLL)
         texts = screen_texts(grab())
+        trace(f"bag: after the item: {', '.join(t for t, _, _ in texts if len(t) > 3)[:120]}")
         msg = next(((t, x, y) for t, x, y in texts
                     if re.search(r"restored|recovered|effect|healed|was used|can't be used", t, re.I)), None)
         if msg:
@@ -1898,8 +2013,9 @@ def back_to_bag(seconds=8.0):
             continue
         party = any(t.lower().startswith(("select a pokemon", "pokemon party")) for t, _, _ in texts)
         cancel = next(((x, y) for t, x, y in texts if t.lower() == "cancel"), None)
-        if party and cancel and said:
+        if party and cancel and said and time.time() - cancelled > 1.0:
             click_at(*cancel)
+            cancelled = time.time()
             continue
         if any(t.lower() == "close" for t, _, _ in texts) and not party:
             return said  # the bag again
@@ -1907,16 +2023,22 @@ def back_to_bag(seconds=8.0):
 
 
 def close_bag_only():
-    """The bag's Close (it goes back to the game, not the MENU). True once it's gone."""
-    end = time.time() + 6
+    """The bag's Close (it goes back to the game, not the MENU). True once it's gone
+    (an encounter coming in closes it too)."""
+    end, clicked = time.time() + 6, 0.0
     while time.time() < end:
-        texts = screen_texts(grab())
-        close = next(((x, y) for t, x, y in texts if t.lower() == "close"), None)
-        if not close and any(norm(t) == "menu" for t, _, _ in texts):
+        img = grab()
+        if find_mute(load_rgb(img)):
             return True
-        if close:
+        texts = screen_texts(img)
+        close = next(((x, y) for t, x, y in texts if t.lower() == "close"), None)
+        if not close and (clicked or any(norm(t) == "menu" for t, _, _ in texts)):
+            return True  # (gone after its click: MENU's tab comes back by itself, quick_menu waits for it)
+        trace(f"bag: closing: {'Close up' if close else 'Close gone'}, {'MENU' if any(norm(t) == 'menu' for t, _, _ in texts) else 'no MENU'}")
+        if close and time.time() - clicked > 1.0:
             click_at(*close)
-        time.sleep(0.3)
+            clicked = time.time()
+        time.sleep(POLL)
     return False
 
 
@@ -1933,6 +2055,8 @@ def debug_workflow(cfg, enc, img, lay):
     def step(name, ok, detail="", picture=None):
         steps.append((name, ok, detail))
         print(f"  debug: {name}: {'ok' if ok else 'FAILED'}" + (f" ({detail})" if detail else ""), flush=True)
+        if timing[0]:
+            print(f"    [{timing[0].lap()}]", flush=True)
         if not ok:
             picture = picture or grab()
             debuglog.debug.shot(f"debug run: {name} went wrong" + (f" ({detail})" if detail else ""), picture)
@@ -1964,7 +2088,7 @@ def debug_workflow(cfg, enc, img, lay):
                 step(f"{move}'s turn", outcome in ("caught", "turn", "over"),
                      f"{outcome}" + (f": {' / '.join(msgs)}"[:250] if msgs else ""))
         if outcome == "turn":
-            step("running", run_away(lay))
+            step("running", run_away(lay, gone_after=0.25))  # (straight on to MENU, which checks again)
     except BattleOver:
         step("the battle", True, "it ended")
     # the MENU at once, as the battle goes (no encounter comes while it or the bag is up):
@@ -1982,20 +2106,24 @@ def debug_workflow(cfg, enc, img, lay):
             step(f"a {item} on {target or '?'}", bool(used), said)
         step("the bag closed", close_bag_only())
 
-    # Save, from the MENU (after a wait, if the game says to); its message clicked away.
-    # An encounter in first (the bag's closing lets them come): away from it, and again
-    saved = save_game(wait=6)
-    img, rgb, now = look(lay.mute)
-    if not saved and now:
-        print("  debug: an encounter came before the save: away from it, and saving again", flush=True)
-        run_away(now)
-        saved = save_game(wait=12)
-    if not saved and save_wait[0]:
-        wait, save_wait[0] = min(save_wait[0] + 2, 125), 0
-        print(f"  debug: the game says to wait {wait} s before saving", flush=True)
-        time.sleep(wait)
-        saved = save_game(wait=6)
-    step("saving", saved)
+    # Save, from the MENU, once (no waiting out the game's cooldown: "please wait" shows
+    # Save works as well as "successful"); its message clicked away. An encounter in first
+    # (the bag's closing lets them come): away from it, then the save
+    def away():
+        _, _, now = look(lay.mute)
+        if now:
+            print("  debug: an encounter came in: away from it, then the save", flush=True)
+            run_away(now, gone_after=0.25)
+        return bool(now)
+
+    away()
+    save_wait[0] = 0
+    saved = save_game(wait=2)
+    if not saved and not save_wait[0] and away():
+        saved = save_game(wait=2)
+    step("saving", saved or save_wait[0] > 0, "" if saved or not save_wait[0] else
+         f"Save answered: wait {save_wait[0]} s (saved a little while ago)")
+    save_wait[0] = 0
     click_at(*lay.pt(*AFK_SPOT))  # the air: nothing left open
 
     bad = [s for s in steps if not s[1]]
@@ -2014,7 +2142,7 @@ def close_after_item():
     Close, the MENU's tab, until neither is up."""
     end = time.time() + 10
     while time.time() < end:
-        time.sleep(0.5)
+        time.sleep(POLL)
         texts = screen_texts(grab())
         msg = next(((x, y) for t, x, y in texts if re.search(r"\bpp\b.*(restored|recovered)|restored", t, re.I)), None)
         close = next(((x, y) for t, x, y in texts if t.lower() == "close"), None)
@@ -2126,6 +2254,7 @@ def hunt(cfg, args):
     test_catch[0] = args.practice
     save_due, last_save, last_check = False, 0.0, 0.0
     last_pp, pp_tries = 0.0, 0
+    times = Timing() if os.environ.get("HUNT_TIMES") else None  # each run-from encounter's time, traced
     if args.paused:
         running.clear()
         print("pokehunt paused: Ctrl+Shift+H to start.")
@@ -2153,6 +2282,7 @@ def hunt(cfg, args):
               "(or take over on the website)", flush=True)
         sound("Bottle")
     publish()  # the website sees it at once, not at the first encounter
+    ocr(Image.new("RGB", (160, 48), "white"))  # its first read is slow (~0.5 s): not at the first encounter
     while True:
         if not running.is_set() and not web.remote:
             wait_running()
@@ -2165,6 +2295,8 @@ def hunt(cfg, args):
             last_status = time.time()
         if not lay:
             since, last_battle = None, None
+            if timing[0] is times and times:
+                times.__exit__()
             if web.phase != "waiting":
                 web.phase = "waiting"
                 publish()
@@ -2205,9 +2337,12 @@ def hunt(cfg, args):
             if quiet > 60 * cfg.get("quiet_alert_minutes", 3) and not quiet_said:
                 trouble(f"no encounter for {quiet / 60:.0f} min", img)
                 quiet_said = True
-            time.sleep(0.2)
+            time.sleep(0.1)  # (a look takes ~0.04 s: an encounter's seen within ~0.15 s)
             continue
         hint = lay.mute
+        if not since and times and not timing[0]:
+            times.__enter__()  # HUNT_TIMES: this encounter's time, from its Mute button on
+            trace("Mute seen")
         since = since or time.time()
         if time.time() - since < SEEN_AFTER:
             time.sleep(0.1)
@@ -2216,6 +2351,8 @@ def hunt(cfg, args):
         got = read_encounter(hint, clicks=not args.watch, draw=args.calibrate or fit_next[0])
         args.calibrate = fit_next[0] = False
         since = None
+        if timing[0] is times and times:
+            read_lap = times.lap()
         if not got:
             last_battle = None
             continue
@@ -2256,8 +2393,17 @@ def hunt(cfg, args):
                 log_encounter(enc, "seen")
             wait_gone(lay)
         elif debug_run[0]:
-            debug_workflow(cfg, enc, img, lay)
+            if timing[0]:
+                timing[0].__exit__()  # (HUNT_TIMES': the debug run has its own)
+            with Timing() as t:
+                ok = debug_workflow(cfg, enc, img, lay)
+                print(f"  (the debug run took {t.at():.1f} s)", flush=True)
             debug_run[0] = False
+            if ok:
+                print("  (the debug run went right: hunting on)", flush=True)
+            elif running.is_set():
+                print("  (the debug run had a step go wrong: paused, see above)", flush=True)
+                toggle()
             publish()  # the window's Debug mode turns off
             last_save = time.time()  # it saved
         else:
@@ -2290,7 +2436,13 @@ def hunt(cfg, args):
                 discord(cfg, f"Seen: {title(enc)} (ran)", game_shot(img, lay))
             if not again:
                 log_encounter(enc, "ran")
+            if timing[0] is times and times:
+                print(f"    [seen and read: {read_lap}]\n    [the rest, to Run: {times.lap()}]", flush=True)
             run_away(lay)
+            if timing[0] is times and times:
+                print(f"    [run, till it's gone: {times.lap()}]\n    [{times.at():.2f} s from its Mute button]", flush=True)
+        if timing[0] is times and times:
+            times.__exit__()
 
 
 def link_website():
