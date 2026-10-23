@@ -117,6 +117,24 @@ object Rules {
     fun show(rule: Map<String, Any>) = rule.entries.joinToString(", ") { (k, v) -> "$k=$v" }
 
     /** Still the same Pokemon, forgiving a misread letter ("Type: Nulll"). */
+    /** The enemy, once the reads of it agree, or null: the last two the same, or
+     *  four in a row of the same Pokemon and level, with the rows most often read.
+     *  The icons count when any read saw them: a sparkling star comes and goes.
+     *  As pokehunt.py's settled. */
+    fun settled(reads: List<Enc>): Enc? {
+        val last = reads.lastOrNull() ?: return null
+        val run = reads.takeLastWhile { it.species == last.species && it.level == last.level }
+        val same = run.size >= 2 && run[run.size - 2].copy(shiny = last.shiny, tint = last.tint) == last
+        if (last.species.isEmpty() || (!same && run.size < 4)) return null
+        fun most(f: (Enc) -> String): String {
+            val seen = run.map(f)
+            return seen.maxWith(compareBy<String>({ v -> seen.count { it == v } }, { it.length }))
+        }
+        val rows = if (same) last else last.copy(reskin = most { it.reskin }, gradient = most { it.gradient },
+                                                 status = most { it.status })
+        return rows.copy(shiny = run.any { it.shiny }, tint = run.any { it.tint })
+    }
+
     fun sameMon(a: Enc, b: Enc): Boolean {
         if (a.level.isNotEmpty() && b.level.isNotEmpty() && a.level != b.level) return false
         return sameWord(a.species, b.species) && listOf("reskin", "gradient").all { k ->
@@ -134,7 +152,10 @@ class Config(json: String) {
      *  working out what went wrong. "" turns it off. */
     val debugWebhook: String = o.optString("debug_webhook", DEBUG_WEBHOOK)
     val targets = rules("targets")
-    val notify = rules("notify")
+    /** Every reskin with a gradient is caught too, unless "catch_reskin_gradient": false. */
+    val notify = rules("notify").let { r ->
+        if (o.optBoolean("catch_reskin_gradient", true) && AUTO_CATCH !in r) r + AUTO_CATCH else r
+    }
     val post = rules("post")
     @Suppress("UNCHECKED_CAST")
     val catch: Map<String, Any> = CATCH_PLAN + (o.optJSONObject("catch")?.let { plain(it) as Map<String, Any> } ?: emptyMap())
@@ -154,7 +175,7 @@ class Config(json: String) {
                     "use ${Rules.FIELDS.joinToString(", ")}"
             }
         }
-        require(targets.isNotEmpty()) { "no targets, nothing to hunt for" }
+        require(targets.isNotEmpty() || notify.isNotEmpty()) { "nothing to hunt for: no targets and nothing to catch" }
     }
 
     fun str(key: String) = catch[key]?.toString() ?: ""
@@ -168,6 +189,7 @@ class Config(json: String) {
     }
 
     companion object {
+        val AUTO_CATCH: Map<String, Any> = mapOf("reskin" to "any", "gradient" to "any")
         /** From secrets.json at build time (app/build.gradle.kts): not in the repository. */
         val DEBUG_WEBHOOK: String = BuildConfig.DEBUG_WEBHOOK
 

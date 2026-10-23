@@ -44,6 +44,8 @@ try:
 except ImportError:
     VERSION, NAME = 0, "dev"
 RULE_FIELDS = {"species", "shiny", "tint", "reskin", "gradient", "not_species"}  # as pokehunt.py's FIELDS
+AUTO_CATCH = {"reskin": "any", "gradient": "any"}  # pokehunt.py's: caught unless "catch_reskin_gradient": false
+WEBHOOK = r"https://((ptb|canary)\.)?discord(app)?\.com/api/webhooks/"
 
 # black on white, and greys
 INK, PAPER, GREY, LINE, SOFT = "#111111", "#ffffff", "#8a8a8a", "#e4e4e4", "#f4f4f4"
@@ -78,8 +80,6 @@ def check_config(cfg):
     """What's wrong with a config the hunter would refuse, or ""."""
     if not isinstance(cfg, dict):
         return "It has to start with { and end with }."
-    if not cfg.get("targets"):
-        return 'There are no "targets": nothing to hunt for.'
     for group in ("targets", "notify", "post"):
         rules = cfg.get(group, [])
         if not isinstance(rules, list) or not all(isinstance(r, dict) for r in rules):
@@ -89,7 +89,88 @@ def check_config(cfg):
             if bad:
                 return (f'"{group}" has a rule with {", ".join(sorted(bad))}, which Hunt doesn\'t know. '
                         f'Rules can say {", ".join(sorted(RULE_FIELDS))}.')
+    if not cfg.get("targets") and not cfg.get("notify") and cfg.get("catch_reskin_gradient") is False:
+        return "There's nothing to hunt for."
     return ""
+
+
+def say_rule(rule):
+    """A rule in words: "Shiny Lapras · Doodle reskin · 10 gradients"."""
+    def names(v):
+        return " or ".join(map(str, v)) if isinstance(v, list) else str(v)
+
+    shiny = {True: "shiny ", False: "not shiny "}.get(rule.get("shiny"), "")
+    species = rule.get("species")
+    words = [shiny + names(species)] if species not in (None, "any") else [shiny.strip()] if shiny else []
+    for key in ("reskin", "gradient", "tint"):
+        v = rule.get(key)
+        if v is None:
+            continue
+        if isinstance(v, bool):
+            words.append(key if v else f"no {key}")
+        elif v == "any":
+            words.append(f"any {key}")
+        elif v == "none":
+            words.append(f"no {key}")
+        elif isinstance(v, list) and len(v) > 3:
+            words.append(f"{len(v)} {key}s")
+        else:
+            words.append(f"{names(v)} {key}")
+    if rule.get("not_species"):
+        words.append("not " + names(rule["not_species"]))
+    said = "  ·  ".join(words) or "Any Pokémon"
+    return said[0].upper() + said[1:]
+
+
+# the hunter's lines, for the log: an encounter, and what only matters when something's wrong
+ENCOUNTER = re.compile(r"^(\d\d:\d\d):\d\d\s+#\d+\s+(.+?)\s+(run|catch|WANTED!|website|practice|-)$")
+NOISE = re.compile(r"^(waiting for an encounter|\(anti-AFK click\)|\(bringing Roblox|\(game saved\)|throwing a |"
+                   r"wanted:|auto-catch:|post only:|Ctrl\+Shift|Quit:|pokehunt (hunting|watching)|debug mode:)"
+                   r"|\(x[\d,]+ in the bag\)$")
+ACTIONS = {"catch": "catching", "WANTED!": "found", "website": "on the website", "practice": "practice"}
+
+
+def tidy(line):
+    """A line the hunter printed, as the log shows it: [(text, style)], or None
+    when it's left out (Show everything has those)."""
+    s = line.strip()
+    m = ENCOUNTER.match(s)
+    if m:
+        time_, what, act = m.groups()
+        name, _, extras = what.partition("  (")
+        words = [name[0].upper() + name[1:]]
+        for extra in filter(None, extras.rstrip(")").split(", ")):
+            kind, _, value = extra.partition(" ")
+            words.append(f"{value.title() if value.isupper() else value} {kind}" if value else kind)
+        out = [(time_ + "   ", "dim"), ("  ·  ".join(words), "ink")]
+        if act in ACTIONS:
+            out.append(("   " + ACTIONS[act], "bold"))
+        return out
+    if not s or NOISE.search(s):
+        return None
+    m = re.match(r"catch: (\w+)(?: \((\d+) ball\(s\), last ([^,]+).*\))?", s)
+    if m:
+        outcome, balls, last = m.groups()
+        said = outcome.capitalize()
+        if balls:
+            said += f" with a {last}" if balls == "1" else f" with {balls} balls, the last a {last}"
+        return [("        " + said, "bold")]
+    if s.startswith("--- "):
+        return [("\n" + s[4:], "dim")]
+    if s.startswith(("|| paused", ">> hunting", ">> watching")):
+        return [("Paused", "dim")] if s.startswith("||") else None
+    s = re.sub(r",? ?screenshot: [^)]*", "", s)
+    if s.startswith("(") and s.endswith(")"):
+        s = s[1:-1]
+    return [("        " + s if line.startswith(" ") else s, "dim" if line.startswith(" ") else "ink")]
+
+
+def entry(parent, var=None, width=None):
+    e = tk.Entry(parent, textvariable=var, font=(FONT, 10), relief="flat", bd=0, bg=PAPER, fg=INK,
+                 insertbackground=INK, highlightthickness=1, highlightbackground=LINE, highlightcolor=INK)
+    if width:
+        e.config(width=width)
+    return e
 
 
 class Button(tk.Label):
@@ -98,8 +179,8 @@ class Button(tk.Label):
 
     def __init__(self, parent, text, command, filled=False, size=10, padx=16, pady=7):
         super().__init__(parent, text=text, cursor="hand2", padx=padx, pady=pady if filled else pady - 1,
-                         font=(FONT, size, "bold" if filled else "normal"), highlightthickness=0 if filled else 1,
-                         highlightbackground=LINE, highlightcolor=LINE)
+                         font=(FONT, size, "bold" if filled else "normal"), bd=0 if filled else 1,
+                         relief="flat" if filled else "solid", highlightthickness=0)
         self.command, self.filled, self.enabled = command, filled, True
         self.bind("<Button-1>", lambda e: self.enabled and self.command())
         self.bind("<Enter>", lambda e: self.enabled and self.config(bg="#3a3a3a" if filled else SOFT))
@@ -119,6 +200,31 @@ class Button(tk.Label):
         if enabled is not None:
             self.enabled = enabled
         self.paint()
+
+
+class Check(tk.Frame):
+    """A black and white checkbox."""
+
+    def __init__(self, parent, text, var):
+        super().__init__(parent, bg=PAPER, cursor="hand2")
+        self.var, self.n = var, round(16 * max(1.0, parent.winfo_fpixels("1i") / 96))
+        self.box = tk.Canvas(self, width=self.n, height=self.n, bg=PAPER, highlightthickness=0, cursor="hand2")
+        self.box.pack(side="left")
+        words = tk.Label(self, text=text, bg=PAPER, fg=INK, font=(FONT, 10), cursor="hand2")
+        words.pack(side="left", padx=(8, 0))
+        for w in (self, self.box, words):
+            w.bind("<Button-1>", lambda e: self.var.set(not self.var.get()))
+        var.trace_add("write", lambda *a: self.paint())
+        self.paint()
+
+    def paint(self):
+        c, n = self.box, self.n
+        c.delete("all")
+        if self.var.get():
+            c.create_rectangle(1, 1, n - 1, n - 1, fill=INK, outline=INK)
+            c.create_line(n * .25, n * .5, n * .43, n * .68, n * .76, n * .32, fill=PAPER, width=max(2, n // 8))
+        else:
+            c.create_rectangle(1, 1, n - 1, n - 1, fill=PAPER, outline=GREY)
 
 
 class Link(tk.Label):
@@ -146,6 +252,8 @@ class Hunt:
         self.update_pending = False
         self.setup = None         # the downloaded installer
         self.note = ""            # what the pill says instead, while an update downloads
+        self.form = None          # What to hunt, while it's open
+        self.raw = []             # what the hunter printed, for the log
         os.makedirs(DATA, exist_ok=True)
         if not os.path.exists(CONFIG):
             with open(os.path.join(HERE, "config.example.json"), encoding="utf-8") as f:
@@ -209,9 +317,17 @@ class Hunt:
         self.log_win.title("Hunt log")
         self.log_win.withdraw()
         self.log_win.protocol("WM_DELETE_WINDOW", lambda: (self.show_log.set(False), self.toggle_log()))
-        self.log = tk.Text(self.log_win, height=24, width=96, bg=PAPER, fg=INK, relief="flat", font=(MONO, 9),
-                           wrap="none", padx=12, pady=10, highlightthickness=0, state="disabled",
-                           selectbackground=LINE, selectforeground=INK)
+        self.everything = tk.BooleanVar(value=False)
+        bar = tk.Frame(self.log_win, bg=PAPER, padx=24, pady=12)
+        bar.pack(side="bottom", fill="x")
+        Check(bar, "Show everything", self.everything).pack(side="left")
+        self.everything.trace_add("write", lambda *a: self.fill_log())
+        self.log = tk.Text(self.log_win, height=24, width=72, bg=PAPER, fg=INK, relief="flat", font=(FONT, 10),
+                           wrap="word", padx=24, pady=18, spacing1=2, spacing3=2, highlightthickness=0,
+                           state="disabled", selectbackground=LINE, selectforeground=INK)
+        for style, kw in (("dim", {"foreground": GREY}), ("ink", {"foreground": INK}),
+                          ("bold", {"font": (FONT, 10, "bold")}), ("raw", {"font": (MONO, 9)})):
+            self.log.tag_config(style, **kw)
         self.log.pack(fill="both", expand=True)
 
         self.watch = tk.BooleanVar(value=False)
@@ -440,7 +556,8 @@ class Hunt:
             messagebox.showerror("Hunt", f"Couldn't start the hunter: {e}")
             return
         self.mode, self.state, self.code, self.last_exit = mode, {}, "", None
-        self.add_line(f"--- {time.strftime('%H:%M:%S')} {mode} ---")
+        self.add_line(f"--- {time.strftime('%H:%M')}  " + {"hunt": "Hunting", "watch": "Watching", "debug": "Test catching",
+                      "diagnose": "Checking this PC", "calibrate": "Fitting the layout"}[mode])
         threading.Thread(target=self.read, args=(self.proc,), daemon=True).start()
         self.show_state()
 
@@ -530,7 +647,7 @@ class Hunt:
             self.show_log.set(True)
             self.toggle_log()
         elif code not in (0, None) and self.last_line and "stopped" not in self.last_line:
-            self.last_exit = ("Stopped", self.last_line)
+            self.last_exit = ("Stopped", "".join(t for t, _ in tidy(self.last_line) or []).strip() or self.last_line)
             self.show_log.set(True)
             self.toggle_log()
         else:
@@ -543,13 +660,34 @@ class Hunt:
         if not line.strip():
             return
         self.last_line = line.strip()
+        self.raw.append(line)
+        if len(self.raw) > 3000:
+            del self.raw[:1000]
+            self.fill_log()
+        else:
+            self.write_log(line)
+
+    def write_log(self, line):
+        parts = [(line, "raw")] if self.everything.get() else tidy(line)
+        if not parts:
+            return
         log = self.log
+        following = log.yview()[1] > 0.99  # unless it's been scrolled back
         log.config(state="normal")
-        log.insert("end", line + "\n")
-        if int(log.index("end-1c").split(".")[0]) > 500:
-            log.delete("1.0", "100.0")
-        log.see("end")
+        for text, style in parts:
+            log.insert("end", text, style)
+        log.insert("end", "\n")
         log.config(state="disabled")
+        if following:
+            log.see("end")
+
+    def fill_log(self):
+        self.log.config(state="normal")
+        self.log.delete("1.0", "end")
+        self.log.config(state="disabled")
+        for line in self.raw:
+            self.write_log(line)
+        self.log.see("end")
 
     def close(self):
         if self.proc is not None:
@@ -561,30 +699,164 @@ class Hunt:
     # ------------------------------------------------------------ what to hunt
 
     def edit_config(self):
+        """What to hunt, as a form: the reskin-and-gradient switch, the rules in
+        words (click one to change it), boxes to add one, and the webhook. The
+        rest of config.json (how it catches...) stays as it is; Edit as text has it all."""
+        if self.form is not None and self.form.winfo_exists():
+            self.form.lift()
+            return
+        try:
+            with open(CONFIG, encoding="utf-8") as f:
+                cfg = json.load(f)
+            if check_config(cfg):
+                raise ValueError(check_config(cfg))
+        except (OSError, ValueError):
+            return self.edit_text()  # only the text can be mended
+        hold = list(cfg.get("targets", []))
+        catch = [r for r in cfg.get("notify", []) if r != AUTO_CATCH]
+        auto = tk.BooleanVar(value=cfg.get("catch_reskin_gradient", True) is not False)
+        win = self.form = tk.Toplevel(self.root, bg=PAPER, padx=28, pady=24)
+        win.title("What to hunt")
+        win.resizable(False, False)
+
+        def heading(text, note, top):
+            tk.Label(win, text=text, bg=PAPER, fg=INK, font=(FONT, 11, "bold"), anchor="w").pack(fill="x",
+                                                                                                 pady=(top, 0))
+            tk.Label(win, text=note, bg=PAPER, fg=GREY, font=(FONT, 9), anchor="w").pack(fill="x")
+
+        Check(win, "Catch every reskin with a gradient", auto).pack(anchor="w")
+        heading("Hold for me", "Hunt stops and leaves the battle to you.", 22)
+        hold_box = tk.Frame(win, bg=PAPER)
+        hold_box.pack(fill="x", pady=(6, 0))
+        heading("Also catch", "Hunt catches these itself.", 18)
+        catch_box = tk.Frame(win, bg=PAPER)
+        catch_box.pack(fill="x", pady=(6, 0))
+
+        heading("Add one", 'Empty is any, "any" means it has one, commas for several.', 22)
+        grid = tk.Frame(win, bg=PAPER)
+        grid.pack(fill="x", pady=(8, 0))
+        boxes = {}
+        for col, (key, label) in enumerate((("species", "Pokémon"), ("reskin", "Reskin"), ("gradient", "Gradient"))):
+            pad = (0 if col == 0 else 10, 0)
+            tk.Label(grid, text=label, bg=PAPER, fg=GREY, font=(FONT, 9)).grid(row=0, column=col, sticky="w", padx=pad)
+            boxes[key] = entry(grid, width=14)
+            boxes[key].grid(row=1, column=col, sticky="we", padx=pad, ipady=4)
+            grid.columnconfigure(col, weight=1)
+        shiny = tk.BooleanVar(value=False)
+        row = tk.Frame(win, bg=PAPER)
+        row.pack(fill="x", pady=(10, 0))
+        Check(row, "Shiny", shiny).pack(side="left")
+        Button(row, "Catch it", lambda: add(catch, catch_box), padx=12, pady=6).pack(side="right")
+        Button(row, "Hold for me", lambda: add(hold, hold_box), padx=12, pady=6).pack(side="right", padx=(0, 8))
+        extra = {}  # what a rule being changed says that the boxes can't (tint, not_species)
+
+        heading("Discord webhook", "Optional: finds are posted there.", 22)
+        hook = tk.StringVar(value=cfg.get("webhook", "") if isinstance(cfg.get("webhook"), str) else "")
+        entry(win, hook).pack(fill="x", pady=(6, 0), ipady=5)
+        error = tk.Label(win, bg=PAPER, fg=INK, font=(FONT, 10, "bold"), anchor="w", justify="left", wraplength=440)
+        error.pack(fill="x", pady=(10, 0))
+
+        def show(rules, box):
+            for w in box.winfo_children():
+                w.destroy()
+            if not rules:
+                tk.Label(box, text="Nothing", bg=PAPER, fg=LINE, font=(FONT, 10), anchor="w").pack(fill="x")
+            for i, rule in enumerate(rules):
+                line = tk.Frame(box, bg=PAPER)
+                line.pack(fill="x")
+                Link(line, "Remove", lambda i=i: (rules.pop(i), show(rules, box)), size=9).pack(side="right")
+                words = Link(line, say_rule(rule), lambda i=i: change(rules, i, box), fg=INK)
+                words.config(wraplength=380, justify="left")
+                words.pack(side="left", pady=2)
+
+        def clear():
+            for e in boxes.values():
+                e.delete(0, "end")
+            shiny.set(False)
+            extra.clear()
+
+        def add(rules, box):
+            rule = dict(extra)
+            for key, e in boxes.items():
+                parts = [p.strip() for p in e.get().split(",") if p.strip()]
+                if parts:
+                    one = parts[0].lower() if parts[0].lower() in ("any", "none", "legendary") else parts[0]
+                    rule[key] = one if len(parts) == 1 else parts
+            if shiny.get():
+                rule["shiny"] = True
+            if not rule:
+                error.config(text="Fill in a box first.")
+                return
+            rules.append(rule)
+            show(rules, box)
+            clear()
+            error.config(text="")
+
+        def change(rules, i, box):
+            rule = rules.pop(i)
+            show(rules, box)
+            clear()
+            for key, e in boxes.items():
+                v = rule.get(key)
+                if v is not None:
+                    e.insert(0, ", ".join(map(str, v)) if isinstance(v, list) else str(v))
+            shiny.set(rule.get("shiny") is True)
+            extra.update({k: v for k, v in rule.items() if k not in boxes and not (k == "shiny" and v is True)})
+            boxes["species"].focus_set()
+
+        def save():
+            if any(e.get().strip() for e in boxes.values()) or shiny.get():
+                error.config(text="Something's in the boxes: press Hold for me or Catch it, or empty them.")
+                return
+            url = hook.get().strip()
+            if url and not re.match(WEBHOOK, url):
+                error.config(text="The webhook should start with https://discord.com/api/webhooks/ "
+                                  "(Discord: channel settings > Integrations > Webhooks > Copy URL).")
+                return
+            if not hold and not catch and not auto.get():
+                error.config(text="That's nothing to hunt for.")
+                return
+            rest = {k: v for k, v in cfg.items() if k not in ("webhook", "targets", "notify")}
+            save_json(CONFIG, {"webhook": url, "targets": hold, "notify": catch, **rest,
+                               "catch_reskin_gradient": auto.get()})
+            win.destroy()
+            self.restart_hunt()
+
+        def as_text():
+            win.destroy()
+            self.edit_text()
+
+        show(hold, hold_box)
+        show(catch, catch_box)
+        bottom = tk.Frame(win, bg=PAPER)
+        bottom.pack(fill="x", pady=(14, 0))
+        Button(bottom, "Save", save, filled=True, padx=22).pack(side="right")
+        Link(bottom, "Cancel", win.destroy, fg=INK).pack(side="right", padx=(0, 18))
+        Link(bottom, "Edit as text", as_text, size=9).pack(side="left")
+
+    def restart_hunt(self):
+        """New settings: a hunt that's on starts again with them."""
+        if self.proc is not None and self.mode in ("hunt", "watch", "debug"):
+            mode = self.mode
+            self.stop(wait=True)
+            self.proc = None
+            self.start(mode)
+
+    def edit_text(self):
+        """All of config.json as text (but the webhook), checked before it's saved."""
         with open(CONFIG, encoding="utf-8") as f:
             text = f.read()
         try:
             cfg = json.loads(text)
-            hook = cfg.pop("webhook", "")
+            kept = cfg.pop("webhook", "")
             text = json.dumps(cfg, indent=2)
         except ValueError:
-            hook = ""
+            kept = ""
         win = tk.Toplevel(self.root, bg=PAPER, padx=24, pady=20)
         win.title("What to hunt")
-        win.transient(self.root)
-        tk.Label(win, text="Discord webhook", bg=PAPER, fg=INK, font=(FONT, 10), anchor="w").pack(fill="x")
-        tk.Label(win, text="Optional: finds are posted there.", bg=PAPER, fg=GREY, font=(FONT, 9),
-                 anchor="w").pack(fill="x")
-        hook_var = tk.StringVar(value=hook)
-        tk.Entry(win, textvariable=hook_var, font=(FONT, 10), relief="flat", bd=0, bg=PAPER, fg=INK,
-                 insertbackground=INK, highlightthickness=1, highlightbackground=LINE,
-                 highlightcolor=INK).pack(fill="x", pady=(6, 18), ipady=5)
-        tk.Label(win, text="Rules", bg=PAPER, fg=INK, font=(FONT, 10), anchor="w").pack(fill="x")
-        tk.Label(win, text='"targets" are held for you, "notify" ones Hunt catches itself, "catch" is how.',
-                 bg=PAPER, fg=GREY, font=(FONT, 9), anchor="w", justify="left", wraplength=560).pack(fill="x")
         frame = tk.Frame(win, bg=PAPER, highlightthickness=1, highlightbackground=LINE)
-        frame.pack(fill="both", expand=True, pady=(6, 0))
-        edit = tk.Text(frame, width=72, height=20, font=(MONO, 10), relief="flat", bg=PAPER, fg=INK,
+        frame.pack(fill="both", expand=True)
+        edit = tk.Text(frame, width=72, height=26, font=(MONO, 10), relief="flat", bg=PAPER, fg=INK,
                        insertbackground=INK, selectbackground=LINE, selectforeground=INK, undo=True,
                        wrap="none", padx=10, pady=8, highlightthickness=0)
         scroll = tk.Scrollbar(frame, command=edit.yview)
@@ -614,20 +886,14 @@ class Hunt:
             if problem:
                 error.config(text=problem)
                 return
-            pasted = cfg.pop("webhook", "")  # a whole config pasted in: the box wins, unless it's empty
-            hook = hook_var.get().strip() or (pasted.strip() if isinstance(pasted, str) else "")
-            if hook and not re.match(r"https://((ptb|canary)\.)?discord(app)?\.com/api/webhooks/", hook):
-                error.config(text="The webhook should start with https://discord.com/api/webhooks/ "
-                                  "(Discord: channel settings > Integrations > Webhooks > Copy URL).")
+            pasted = cfg.pop("webhook", "")  # a whole config pasted in: its webhook, unless it's empty
+            url = (pasted.strip() if isinstance(pasted, str) else "") or kept
+            if url and not re.match(WEBHOOK, url):
+                error.config(text="The webhook should start with https://discord.com/api/webhooks/.")
                 return
-            save_json(CONFIG, {"webhook": hook, **cfg})
+            save_json(CONFIG, {"webhook": url, **cfg})
             win.destroy()
-            if self.proc is not None and self.mode in ("hunt", "watch", "debug"):
-                mode = self.mode
-                self.stop(wait=True)
-                self.proc = None
-                self.start(mode)
-                self.add_line("  (restarted with the new settings)")
+            self.restart_hunt()
 
         def example():
             if messagebox.askyesno("What to hunt", "Replace this with Hunt's example?", parent=win):
@@ -640,9 +906,8 @@ class Hunt:
         row = tk.Frame(win, bg=PAPER)
         row.pack(fill="x", pady=(12, 0))
         Button(row, "Save", save, filled=True, padx=22).pack(side="right")
-        Button(row, "Cancel", win.destroy).pack(side="right", padx=(0, 8))
+        Link(row, "Cancel", win.destroy, fg=INK).pack(side="right", padx=(0, 18))
         Link(row, "Start over from the example", example, size=9).pack(side="left")
-        win.grab_set()
 
     # ------------------------------------------------------------ updates
 
@@ -780,8 +1045,16 @@ def smoke(hunt):
         hunt.offer_update({"version": VERSION + 1, "name": "smoke"})
         hunt.show_log.set(True)
         hunt.toggle_log()
-        hunt.add_line("smoke")
+        for line in ("11:38:34  #60   Marill Lv51  (reskin KYOBLOXER, gradient IMPULSIVE BEAST) catch",
+                     "  catch: caught (1 ball(s), last Quick Ball, 1 turns)", "|| paused (Ctrl+Shift+H to resume)",
+                     "  (no encounter for 31 min, screenshot: C:\\Hunt\\debug\\x.png)", "waiting for an encounter..."):
+            hunt.add_line(line)
+        hunt.everything.set(True)
+        hunt.everything.set(False)
         hunt.edit_config()
+        root.update()
+        hunt.form.destroy()
+        hunt.edit_text()
         root.update()
         size = f"ok: the pill is {root.winfo_width()} x {root.winfo_height()} at {root.winfo_x()}, {root.winfo_y()}\n"
     except Exception:

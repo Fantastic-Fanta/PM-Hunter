@@ -354,11 +354,11 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
 
     private class Read(val enc: Enc, val f: Frame, val lay: Layout)
 
-    /** Waits for the Fight/Run menu and reads the enemy until two reads in a
-     *  row agree. Null once the encounter is over. */
+    /** Waits for the Fight/Run menu and reads the enemy until the reads agree
+     *  (Rules.settled). Null once the encounter is over. */
     private fun readEncounter(start0: Box): Read? {
         var hint: Box = start0
-        var prev: Enc? = null
+        val reads = ArrayList<Enc>()
         var gone: Double? = null
         val start = now()
         var saved = false
@@ -386,9 +386,9 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
                 if (autoCalibrate(f, lay.mute)) continue
             }
             if (readable) {
-                val enc = readEnemy(f, lay)
-                if (enc.species.isNotEmpty() && enc == prev) return Read(enc, f, lay)
-                prev = enc
+                reads += readEnemy(f, lay)
+                if (reads.size > 8) reads.removeAt(0)
+                Rules.settled(reads)?.let { return Read(it, f, lay) }
             }
             if (now() - start > 15 && !saved) {
                 // never Run from something unread: it might be the one
@@ -396,6 +396,10 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
                           else if (menu) "can't read the enemy's box" else "no Fight/Run menu"
                 trouble("$why for 15 s, waiting", f)
                 saved = true
+            }
+            if (!watch && now() - lastClick > AFK_EVERY) {  // waiting for you: Roblox kicks at 20 min
+                tap(lay.pt(Ref.AFK_SPOT))
+                Log.say("  (anti-AFK tap)")
             }
             nap(0.2)
         }

@@ -44,10 +44,6 @@
       "gradient": "any"
     },
     {
-      "reskin": "any",
-      "gradient": "any"
-    },
-    {
       "reskin": "Doodle",
       "shiny": true,
       "not_species": "Frillish"

@@ -556,6 +556,9 @@ def wanted(enc, targets):
     return None
 
 
+AUTO_CATCH = {"reskin": "any", "gradient": "any"}  # caught unless "catch_reskin_gradient": false
+
+
 def load_config(path):
     with open(path) as f:
         cfg = json.load(f)
@@ -564,8 +567,11 @@ def load_config(path):
         if bad:
             sys.exit(f"config.json: unknown field(s) {', '.join(sorted(bad))} in {rule}; "
                      f"use {', '.join(FIELDS)}")
-    if not cfg.get("targets"):
-        sys.exit("config.json: no targets, nothing to hunt for")
+    cfg.setdefault("targets", [])
+    if cfg.get("catch_reskin_gradient", True) and AUTO_CATCH not in cfg.get("notify", []):
+        cfg["notify"] = cfg.get("notify", []) + [dict(AUTO_CATCH)]
+    if not cfg["targets"] and not cfg.get("notify"):
+        sys.exit("config.json: nothing to hunt for (no targets, and nothing to catch)")
     cfg["catch"] = {**CATCH_PLAN, **cfg.get("catch", {})}
     return cfg
 
@@ -1046,6 +1052,32 @@ GONE_AFTER = 1.0    # s without the Mute button before an encounter counts as ov
 SEEN_AFTER = 0.4    # s with the Mute button before it counts as started
 
 
+STEADY = ("species", "level", "reskin", "gradient", "status")
+
+
+def settled(reads):
+    """The enemy, once the reads of it agree, or None: the last two the same, or
+    four in a row of the same Pokemon and level, with the rows most often read
+    (Windows reads the small rows a little differently each time). The icons
+    count when any read saw them: a sparkling star comes and goes."""
+    last, run = reads[-1], []
+    for r in reversed(reads):  # this Pokemon and level, latest last
+        if (r["species"], r["level"]) != (last["species"], last["level"]):
+            break
+        run.insert(0, r)
+    same = len(run) >= 2 and all(run[-2][k] == last[k] for k in STEADY)
+    if not last["species"] or (not same and len(run) < 4):
+        return None
+    enc = dict(last)
+    if not same:
+        for k in ("reskin", "gradient", "status"):
+            seen = [r[k] for r in run]
+            enc[k] = max(seen, key=lambda v: (seen.count(v), len(v)))
+    for k in ("shiny", "tint", "owned"):
+        enc[k] = any(r.get(k) for r in run)
+    return enc
+
+
 def look(hint):
     img = grab()
     use_calibration(img.size)
@@ -1055,12 +1087,12 @@ def look(hint):
 
 
 def read_encounter(hint, clicks=False, draw=False):
-    """Waits for the Fight/Run menu and reads the enemy until two reads in a
-    row agree. Returns (enc, img, layout), or None once the encounter is over.
+    """Waits for the Fight/Run menu and reads the enemy until the reads agree
+    (settled). Returns (enc, img, layout), or None once the encounter is over.
     With clicks it may click, to close the chat when that's in the way. The
     layout is fitted on the first encounter on this screen, when the battle
     can't be read for a few seconds, or (draw) to draw it for you to check."""
-    prev, gone, start, saved = None, None, time.time(), False
+    reads, gone, start, saved = [], None, time.time(), False
     chat_click, chat_clicks, cal_at = 0.0, 0, 0.0
     while True:
         img, rgb, lay = look(hint)
@@ -1090,16 +1122,19 @@ def read_encounter(hint, clicks=False, draw=False):
                 draw = False
                 continue  # read again with the new layout
         if readable:
-            enc = read_enemy(img, rgb, lay)
-            if enc["species"] and enc == prev:
+            reads = reads[-7:] + [read_enemy(img, rgb, lay)]
+            enc = settled(reads)
+            if enc:
                 return enc, img, lay
-            prev = enc
         if time.time() - start > 15 and not saved:
             # never Run from something unread: it might be the one
             why = ("chat is covering the enemy's box" if chat else
                    "can't read the enemy's box" if menu else "no Fight/Run menu")
             trouble(f"{why} for 15 s, waiting", img)
             saved = True
+        if clicks and time.time() - last_click[0] > AFK_EVERY:  # waiting for you: Roblox kicks at 20 min
+            click_at(*lay.pt(*AFK_SPOT))
+            say("  (anti-AFK click)")
         time.sleep(0.2)
 
 

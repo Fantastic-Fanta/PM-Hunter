@@ -17,6 +17,9 @@ be read.
 
 Double-click `pokehunt.command`. Ctrl+Shift+H pauses and resumes.
 
+Every reskin with a gradient is caught, on every platform, without a rule
+for it: `"catch_reskin_gradient": false` in config.json turns that off.
+
 ## Windows
 
 **Hunt for Windows** is `HuntSetup.exe` on https://poopihunt.xyz: download,
@@ -26,10 +29,12 @@ info > Run anyway**) because the installer isn't signed.
 
 The window (`app.py`, Hunt.exe) is a pill with no frame, dragged by its
 words: what it's doing, the website code (click it for the website), start /
-pause, stop, and **•••** for everything else: **What to hunt** (config.json,
-checked before it's saved, with the Discord webhook in a box of its own),
-**Finds**, **Watch only**, the log, Check this PC, Test catching, fit the
-layout again, **Send problem reports** and Close. A find turns it white. The
+pause, stop, and **•••** for everything else: **What to hunt** (a form for
+config.json: the reskin-and-gradient switch, the rules in words to hold or
+catch, boxes to add one, the webhook; **Edit as text** has all of it),
+**Finds**, **Watch only**, the log (encounters and catches; **Show everything**
+for all the hunter printed), Check this PC, Test catching, fit the layout
+again, **Send problem reports** and Close. A find turns it white. The
 hunter itself is pokehunt.py
 (hunt-engine.exe), run by the window with `--window`. What a PC keeps
 (config.json, finds, calibration, the website key) is in `%LOCALAPPDATA%\Hunt`.
