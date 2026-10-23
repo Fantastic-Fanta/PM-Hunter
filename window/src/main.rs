@@ -196,7 +196,7 @@ enum Msg {
     Line(u64, String),
     Ended(u64, bool),
     Update(Map<String, Value>),
-    Progress(String),
+    Progress(f32), // how much of the update's down, 0 to 1
     Downloaded(PathBuf),
     UpdateFailed(String),
 }
@@ -262,6 +262,7 @@ struct Hunt {
     install_when_stopped: bool,
     install_when_paused: bool,
     downloading: bool, // an update's on its way down
+    progress: Option<f32>, // the update, as the pill shows it (all of it a progress bar): 1 is installing
     was_hunting: bool, // the last state's: a stop is when it goes, and a look for a newer build
 
     pos: Option<Pos2>,
@@ -333,6 +334,7 @@ impl Hunt {
             install_when_stopped: false,
             install_when_paused: false,
             downloading: false,
+            progress: None,
             was_hunting: false,
             pos,
             pos_saved: pos,
@@ -536,7 +538,7 @@ impl Hunt {
         if !hunting && self.install_when_paused && self.was_found.is_empty() {
             // (not with a find held on screen for you: Hunt stays, keeping Roblox awake)
             self.install_when_paused = false;
-            self.note = "Installing".into();
+            self.progress = Some(1.0);
             self.install_when_stopped = true;
             self.stop(); // ended() installs, once the hunter is gone
         }
@@ -695,7 +697,7 @@ impl Hunt {
         }
         self.downloading = true;
         if !self.hunting() {
-            self.note = "Downloading".into();
+            self.progress = Some(0.0);
         }
         let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
         thread::spawn(move || {
@@ -722,7 +724,7 @@ impl Hunt {
                     digest.update(&buf[..n]);
                     got += n as u64;
                     if total > 0 {
-                        let _ = tx.send(Msg::Progress(format!("{}%", 100 * got / total)));
+                        let _ = tx.send(Msg::Progress(got as f32 / total as f32));
                         ctx.request_repaint();
                     }
                 }
@@ -995,8 +997,9 @@ impl Hunt {
             // just the ball at the right end now, going
             let gone = ease_in((since - FOLD) / VANISH);
             let (ball, radius) = (pos2(W - r, r), r * (1.0 - gone));
+            let fill = if self.progress.is_some() { c.ink } else { c.fill }; // (white after "Installing")
             painter.circle_filled(ball, radius, c.edge.gamma_multiply(1.0 - gone));
-            painter.circle_filled(ball, (radius - 1.0).max(0.0), c.fill.gamma_multiply(1.0 - gone));
+            painter.circle_filled(ball, (radius - 1.0).max(0.0), fill.gamma_multiply(1.0 - gone));
             return;
         }
         if lift > 0.0 {
@@ -1014,6 +1017,36 @@ impl Hunt {
         }
         if bg.clicked() {
             ctx.memory_mut(|m| m.surrender_focus(Id::new("hook")));
+        }
+        if env::var_os("HUNT_PREVIEW_UPDATE").is_some() {
+            self.progress = Some(((t - 1.5) / 4.0).clamp(0.0, 1.0)); // a look at the update: down in 4 s
+        }
+
+        // an update on its way: the whole pill one progress bar, white filling it from the
+        // left, "Installing" once it's all white; then Hunt closes, and the installer opens
+        // the new one
+        let updating = ctx.animate_bool_with_time(Id::new("updating"), self.progress.is_some() && !self.hunting(), 0.35);
+        if updating > 0.0 {
+            let layer = egui::LayerId::new(egui::Order::Foreground, Id::new("update"));
+            ctx.set_transform_layer(layer, egui::emath::TSTransform::new(MARGIN + middle * (1.0 - s), s));
+            let p = ctx.layer_painter(layer);
+            let inner = shape.shrink(1.0);
+            let done = ctx.animate_value_with_time(Id::new("progress"), self.progress.unwrap_or(1.0), 0.3);
+            let cut = inner.min.x + inner.width() * done;
+            let (filled, empty) = (inner.with_max_x(cut), inner.with_min_x(cut));
+            p.rect_filled(inner, r - 1.0, c.fill.gamma_multiply(updating));
+            p.with_clip_rect(filled).rect_filled(inner, r - 1.0, c.ink.gamma_multiply(updating));
+            let label = if done < 0.995 { format!("Updating  {:.0}%", done * 100.0) } else { "Installing".into() };
+            let font = FontId::proportional(TEXT);
+            // the words white on the black, black on the white
+            p.with_clip_rect(empty).text(inner.center(), Align2::CENTER_CENTER, &label, font.clone(),
+                                         c.ink.gamma_multiply(updating));
+            p.with_clip_rect(filled).text(inner.center(), Align2::CENTER_CENTER, &label, font,
+                                          c.fill.gamma_multiply(updating));
+            ctx.request_repaint();
+            if updating > 0.5 {
+                return; // nothing under it to click
+            }
         }
         let cy = H / 2.0;
         if closing.is_some() {
@@ -1203,26 +1236,26 @@ impl eframe::App for Hunt {
                 }
                 Msg::Progress(p) => {
                     if !self.hunting() {
-                        self.note = p;
+                        self.progress = Some(p.min(0.99));
                     }
                 }
                 Msg::UpdateFailed(e) => {
                     self.say(&format!("the update didn't download: {e}"));
-                    self.note.clear();
+                    self.progress = None;
                     self.downloading = false; // (the next look tries again)
                 }
                 Msg::Downloaded(path) => {
                     self.installer = Some(path);
                     self.downloading = false;
                     if self.hunting() {
-                        self.note.clear();
+                        self.progress = None;
                         self.install_when_paused = true; // once it stops (you, a find, Ctrl+Shift+H)
                     } else if self.proc.is_some() {
-                        self.note = "Installing".into();
+                        self.progress = Some(1.0);
                         self.install_when_stopped = true;
                         self.stop(); // ended() installs, once the hunter is gone
                     } else {
-                        self.note = "Installing".into();
+                        self.progress = Some(1.0);
                         self.install();
                     }
                 }
