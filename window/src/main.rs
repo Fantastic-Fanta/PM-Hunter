@@ -36,7 +36,7 @@ const NAME: &str = match option_env!("HUNT_NAME") {
 const W: f32 = 340.0; // the pill
 const H: f32 = 40.0;
 const CONTROL: f32 = 26.0; // every button and box is this tall
-// room round the pill in its window (see-through): for its glow, ripples and shadow.
+// room round the pill in its window (see-through): for the shadow it has while dragged.
 // The pill's place (pos, window.json) is the pill's own; the window is M up and left of it.
 const M: f32 = 16.0;
 const MARGIN: Vec2 = Vec2::splat(M);
@@ -258,7 +258,6 @@ struct Hunt {
     closed: bool,           // the closing's done: the window may go
     lifted: Option<Instant>, // being dragged, since
     moved_at: Option<Instant>, // its place last changed
-    found_at: Option<Instant>, // the find on show, since
     smoke: Option<Smoke>,
     start_now: bool, // the hunter starts with Hunt, paused (--start: hunting)
 }
@@ -327,7 +326,6 @@ impl Hunt {
             closed: false,
             lifted: None,
             moved_at: None,
-            found_at: None,
             // (only where it's see-through: on Direct3D the window over the screen would be black)
             intro: ((!env::args().any(|a| a == "--smoke") || env::args().any(|a| a == "--intro"))
                     && env::var_os("HUNT_NO_INTRO").is_none() && env::var_os("HUNT_RENDERER").is_none())
@@ -945,14 +943,8 @@ impl Hunt {
         ctx.set_transform_layer(ui.layer_id(),
                                 egui::emath::TSTransform::new(MARGIN + middle * (1.0 - s), s)); // M in, and the lift
 
-        // a find: the pill turns white, light ripples off it, and it glows while the battle's held
-        let found = self.found_now();
-        if found && self.found_at.is_none() {
-            self.found_at = Some(Instant::now());
-        } else if !found {
-            self.found_at = None;
-        }
-        let white = ctx.animate_bool_with_time(Id::new("found"), found, 0.45);
+        // a find: the pill fades to white
+        let white = ctx.animate_bool_with_time(Id::new("found"), self.found_now(), 0.45);
         let c = look_at(white);
         let light = white > 0.5;
 
@@ -969,10 +961,10 @@ impl Hunt {
         if let Some(since) = closing {
             reveal = reveal.min(1.0 - ease(since / 0.15));
         }
-        if reveal < 1.0 || lift > 0.0 || self.found_at.is_some() {
+        if reveal < 1.0 || lift > 0.0 {
             ctx.request_repaint();
         }
-        // (out into the margin too: the glow, the ripples, the lift's shadow)
+        // (out into the margin too: the lift's shadow)
         let mut painter = ui.painter().clone();
         painter.set_clip_rect(Rect::from_min_size(Pos2::ZERO - MARGIN, WINDOW));
 
@@ -989,20 +981,6 @@ impl Hunt {
             let shadow = egui::Shadow { offset: [0, (6.0 * lift) as i8], blur: 14, spread: 0,
                                         color: Color32::from_black_alpha((90.0 * lift) as u8) };
             painter.add(shadow.as_shape(shape, r));
-        }
-        if let Some(e) = self.found_at.map(|f| f.elapsed().as_secs_f32()) {
-            let glow = 0.5 + 0.5 * (e * 2.6).sin();
-            let halo = egui::Shadow { offset: [0, 0], blur: 14, spread: 0,
-                                      color: Color32::from_white_alpha(((40.0 + 50.0 * glow) * white) as u8) };
-            painter.add(halo.as_shape(shape, r));
-            for i in 0..2 {
-                let q = (e - i as f32 * 0.3) / 0.9;
-                if q > 0.0 && q < 1.0 {
-                    painter.rect_stroke(shape.expand(ease(q) * (M - 2.0)), r + ease(q) * (M - 2.0),
-                                        Stroke::new(1.5_f32, PAPER.gamma_multiply(0.6 * (1.0 - q))),
-                                        egui::StrokeKind::Middle);
-                }
-            }
         }
         // the outline; dragged by anything that isn't a button
         painter.rect_filled(shape, r, c.edge); // a hairline around it, for dark games
