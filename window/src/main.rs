@@ -1138,8 +1138,9 @@ fn single_instance() -> bool {
 }
 
 fn main() -> eframe::Result {
-    if !single_instance() {
-        return Ok(());
+    std::panic::set_hook(Box::new(|info| note(&format!("Hunt's window crashed: {info}"))));
+    if env::var_os("HUNT_RENDERER").is_none() && !single_instance() {
+        return Ok(()); // (the Direct3D start is this same Hunt, already counted)
     }
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Hunt")
@@ -1157,6 +1158,27 @@ fn main() -> eframe::Result {
     }) {
         viewport = viewport.with_position([x, y]);
     }
-    let options = eframe::NativeOptions { viewport, renderer: eframe::Renderer::Glow, ..Default::default() };
-    eframe::run_native("Hunt", options, Box::new(|cc| Ok(Box::new(Hunt::new(cc)))))
+    // OpenGL draws it see-through. A PC without it (no graphics driver) gets
+    // Direct3D instead, square: Hunt starts again that way (one window per run).
+    let direct3d = env::var_os("HUNT_RENDERER").is_some_and(|r| r == "wgpu");
+    let renderer = if direct3d { eframe::Renderer::Wgpu } else { eframe::Renderer::Glow };
+    let options = eframe::NativeOptions { viewport, renderer, ..Default::default() };
+    let result = eframe::run_native("Hunt", options, Box::new(|cc| Ok(Box::new(Hunt::new(cc)))));
+    if let Err(e) = &result {
+        note(&format!("Hunt's window didn't open ({}): {e}", if direct3d { "Direct3D" } else { "OpenGL" }));
+        if !direct3d {
+            let me = env::current_exe().unwrap_or_default();
+            if Command::new(me).args(env::args().skip(1)).env("HUNT_RENDERER", "wgpu").spawn().is_ok() {
+                return Ok(());
+            }
+        }
+    }
+    result
+}
+
+/// A line in hunt.log from before (or after) the window: what went wrong.
+fn note(line: &str) {
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(Paths::new().log) {
+        let _ = writeln!(f, "{line}");
+    }
 }

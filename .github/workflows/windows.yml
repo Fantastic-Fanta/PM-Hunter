@@ -84,16 +84,19 @@ jobs:
           HUNT_DATA: ${{ runner.temp }}\pill
         run: |
           New-Item -ItemType Directory -Force $env:HUNT_DATA | Out-Null
-          $p = Start-Process dist\Hunt\Hunt.exe -ArgumentList --smoke -PassThru
-          Start-Sleep -Seconds 3  # the panel is open by then: a picture of the screen
+          Start-Process dist\Hunt\Hunt.exe -ArgumentList --smoke
+          Start-Sleep -Seconds 3.5  # the panel is open by then: a picture of the screen
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
           $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
           $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
           [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
           $bmp.Save("$env:HUNT_DATA\screen.png")
-          if (-not $p.WaitForExit(20000)) { $p.Kill(); "Hunt.exe didn't finish"; exit 1 }
-          Get-Content "$env:HUNT_DATA\smoke.txt"
-          exit $p.ExitCode
+          # (it may have started again on Direct3D, as another process: smoke.txt says when it's done)
+          for ($i = 0; $i -lt 40 -and -not (Test-Path "$env:HUNT_DATA\smoke.txt"); $i++) { Start-Sleep -Milliseconds 500 }
+          Get-Content "$env:HUNT_DATA\hunt.log" -ErrorAction SilentlyContinue | Select-String "window"
+          $smoke = Get-Content "$env:HUNT_DATA\smoke.txt" -ErrorAction SilentlyContinue
+          $smoke
+          if ("$smoke" -notmatch "^ok:") { exit 1 }
 
       - uses: actions/upload-artifact@v7
         if: always()
