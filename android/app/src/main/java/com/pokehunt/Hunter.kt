@@ -470,17 +470,22 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
         throw BattleOver()
     }
 
-    private fun useItem(lay: Layout, tab: String, item: String, target: String? = null): Boolean {
+    /** What useItem used last: prefer, when that was a favorite. */
+    private var usedItem = ""
+
+    /** prefer: used instead of item, if it's a favorite in that tab. */
+    private fun useItem(lay: Layout, tab: String, item: String, target: String? = null, prefer: String? = null): Boolean {
         // the bag's search box would bring up the keyboard, which on a phone covers the list
         phone.keyboardHidden(true)
         try {
-            return useItemIn(lay, tab, item, target)
+            return useItemIn(lay, tab, item, target, prefer)
         } finally {
             phone.keyboardHidden(false)
         }
     }
 
-    private fun useItemIn(lay: Layout, tab: String, item: String, target: String?): Boolean {
+    private fun useItemIn(lay: Layout, tab: String, wanted: String, target: String?, prefer: String?): Boolean {
+        var item = wanted
         ensureBattle(lay)
         trace("bag: opening it for $item")
         tap(lay.pt(Ref.BAG))
@@ -540,6 +545,17 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
                 // the search box, right of the list's names: typing the item's name
                 // leaves just its row (scrolling for it is the way when that fails)
                 "search" -> if (now() - tabAt > 0.6) {
+                    val fav = prefer?.let { p ->
+                        texts.filter { Rules.norm(it.text) == Rules.norm(p) && it.x < split }.minByOrNull { it.y }
+                    }
+                    if (fav != null && Rules.norm(prefer!!) != Rules.norm(item) && Vision.favorited(img, texts, fav.y, v)) {
+                        Log.print("  $prefer is a favorite: throwing that instead of the $item")
+                        item = prefer
+                        step = "item"  // favorites are at the top of the tab: no search
+                        tabAt = now()
+                        searched = true
+                        continue
+                    }
                     val close = texts.firstOrNull { it.text.equals("close", true) }
                     val count = Regex("x[\\d,.]+", RegexOption.IGNORE_CASE)
                     val rows = texts.filter { count.matches(it.text) }.minOfOrNull { it.y }
@@ -611,6 +627,7 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
                     if (use != null && named.any { Rules.norm(it.text) == Rules.norm(item) }) {
                         trace("bag: $item is selected: Use")
                         tap(use)
+                        usedItem = item
                         if (target == null) return true
                         step = "target"
                         end = maxOf(end, now() + 6)  // the party screen takes a moment to come up
@@ -795,6 +812,8 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
         var heals = 0
         var elixirs = 0
         var cur = enc
+        // the first ball is a Park Ball if one is favorited in the bag (not in debug mode)
+        var park = if (cfg.flag("park_ball") && !debugMode) "Park Ball" else null
         Log.print("  catching ${enc.title()} Lv${enc.level.ifEmpty { "?" }} with ${lead.ifEmpty { "?" }}: up to " +
                   "$maxBalls balls, $maxTurns turns" + if (legendary) " (legendary)" else "")
         while (true) {
@@ -830,8 +849,9 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
             if (ball != null) {
                 if (balls.size >= maxBalls) return "gave up" to "${balls.size} balls"
                 trace("throwing a $ball (#${balls.size + 1})")
-                if (!useItem(lay, "Pokeballs", ball)) return "no bag" to "$ball failed"
-                balls.add(ball)
+                if (!useItem(lay, "Pokeballs", ball, prefer = park)) return "no bag" to "$ball failed"
+                balls.add(usedItem)
+                park = null
             }
             val turn = waitTurn(lay)
             lay = turn.lay

@@ -571,6 +571,7 @@ def load_config(path):
 
 
 CATCH_PLAN = {  # config.json "catch" overrides these
+    "park_ball": True,  # a favorited Park Ball (it never misses) goes first, before first_ball
     "first_ball": "Quick Ball", "sleep_move": "Yawn", "guard_move": "Protect",
     "asleep_ball": "Repeat Ball", "awake_ball": "Repeat Ball", "new_ball": "Dive Ball",
     "max_balls": 8,
@@ -1155,6 +1156,20 @@ def find_use_button(rgb, below):
     return best[1:] if best else None
 
 
+def favorited(rgb, texts, y, v):
+    """The bag's row at y is a favorite: its count tag ("x985") is yellow;
+    the others' are light blue."""
+    count = next(((x, ty) for t, x, ty in texts if re.fullmatch(r"x[\d,.]+", t) and abs(ty - y) < 30 * v), None)
+    if not count:
+        return False
+    x, cy = count
+    p = rgb[max(int(cy - 10 * v), 0):int(cy + 10 * v), max(int(x - 110 * v), 0):int(x - 70 * v)]
+    if p.size == 0:
+        return False
+    r, g, b = p[..., 0], p[..., 1], p[..., 2]
+    return bool(((r > 200) & (g > 150) & (b < 150)).mean() > 0.5)
+
+
 def region_text(img, lay, box):
     x0, y0, x1, y1 = lay.box(box)
     return " ".join(t for t, _, _ in ocr(img.crop((x0, y0, x1, y1))))
@@ -1194,10 +1209,37 @@ def ensure_battle(lay):
     raise BattleOver()
 
 
-def use_item(lay, tab, item, target=None):
+TABS = ("Recovers", "Pokeballs", "Key Items", "Evolution", "Competitive", "TMs", "Held Items", "Z-Crystals")
+
+
+def find_tab(texts, want, split, width):
+    """Where the backpack's tab is, (x, y). On a small window the labels are
+    tiny and some aren't read, or are misread, but the tabs sit in a fixed
+    order, evenly spaced: one that isn't read is worked out from the ones
+    that are. As Reader.findTab on Android."""
+    i = next((n for n, t in enumerate(TABS) if t.lower() == want.lower()), -1)
+    if i < 0:
+        return next(((x, y) for t, x, y in texts if t.lower() == want.lower()), None)
+    hits = [(n, x, y) for t, x, y in texts if x < split
+            for n in [next((n for n, tab in enumerate(TABS) if norm(tab) == norm(t) or same_word(tab, t)), -1)]
+            if n >= 0]
+    if not hits:
+        return None
+    col = min(x for _, x, _ in hits)  # the tab column; the list's heading is further right
+    in_col = [h for h in hits if abs(h[1] - col) < 0.04 * width]
+    exact = next(((x, y) for n, x, y in in_col if n == i), None)
+    if exact or len({n for n, _, _ in in_col}) < 2:
+        return exact
+    ns, ys = np.array([n for n, _, _ in in_col], float), np.array([y for _, _, y in in_col], float)
+    step = ((ns - ns.mean()) * (ys - ys.mean())).sum() / ((ns - ns.mean()) ** 2).sum()
+    return float(np.median([x for _, x, _ in in_col])), float(ys.mean() + step * (i - ns.mean()))
+
+
+def use_item(lay, tab, item, target=None, prefer=None):
     """Bag -> tab -> item -> Use, and -> party member when the item asks for
     one. Favorited items sit at the top of their tab; anything else is
-    searched for. True once used; on failure the backpack is closed again."""
+    searched for. prefer: used instead, if it's a favorite there. The name
+    of what was used; False on failure (the backpack is closed again)."""
     ensure_battle(lay)
     trace(f"bag: opening it for {item}")
     click_at(*lay.pt(*BAG))
@@ -1213,12 +1255,23 @@ def use_item(lay, tab, item, target=None):
         img = grab()
         texts = screen_texts(img)
         if step == "tab":
-            hit = next(((x, y) for t, x, y in texts if t.lower() == tab.lower()), None)
+            # the bag opens on the tab it was left on: the item in sight there, no click
+            names = {norm(item)} | ({norm(prefer)} if prefer else set())
+            if any(norm(t) in names and x < split for t, x, y in texts):
+                trace(f"bag: {item} is in sight already")
+                step, tab_at = "item", time.time()
+                continue
+            hit = find_tab(texts, tab, split, img.width)
             if hit:
                 trace(f"bag: {tab} tab at ({hit[0]:.0f}, {hit[1]:.0f})")
                 click_at(*hit)
                 step, tab_at = "item", time.time()
         elif step == "item":
+            if prefer and not searched and norm(prefer) != norm(item):
+                fav = sorted(y for t, x, y in texts if norm(t) == norm(prefer) and x < split)
+                if fav and favorited(load_rgb(img), texts, fav[0], v):
+                    print(f"  {prefer} is a favorite: throwing that instead of the {item}", flush=True)
+                    item = prefer
             # exact names: "Dive Ball" and "Dream Ball" are one misread apart
             rows = sorted((y, x) for t, x, y in texts if norm(t) == norm(item) and x < split)
             if rows:
@@ -1250,7 +1303,7 @@ def use_item(lay, tab, item, target=None):
                 click_at(*use)
                 move_mouse(*lay.pt(*AFK_SPOT))
                 if not target:
-                    return True
+                    return item
                 step = "target"
                 end = max(end, time.time() + 6)  # the party screen takes a moment to come up
             elif named or time.time() - picked_at > 2.5:
@@ -1266,7 +1319,7 @@ def use_item(lay, tab, item, target=None):
                 hit = next(((x, y) for t, x, y in texts if same_word(target, t)), None)
                 if hit:
                     click_at(*hit)
-                    return True
+                    return item
     say(f"  (couldn't use {item}: {snapshot(img, 'bag')}, text read: "
         f"{', '.join(t for t, _, _ in texts)[:300]})")
     close_bag(texts)
@@ -1372,6 +1425,8 @@ def catching(enc, img, lay, plan, first_ball=True, debug=False, progress=None):
     max_turns = plan["legendary_max_turns" if legendary else "max_turns"]
     balls, turns, drowsy, heals, elixirs = [], 0, False, 0, 0
     now = enc
+    # the first ball is a Park Ball if one is favorited in the bag (not for practice or tests)
+    park = "Park Ball" if plan.get("park_ball", True) and first_ball and not debug else None
     # A Repeat Ball only helps on species you've caught before (the little
     # Poke Ball icon); anything new gets new_ball instead.
     new = None if enc.get("owned", True) else plan.get("new_ball")
@@ -1414,9 +1469,11 @@ def catching(enc, img, lay, plan, first_ball=True, debug=False, progress=None):
             if len(balls) >= max_balls:
                 return "gave up", f"{len(balls)} balls"
             trace(f"throwing a {ball} (#{len(balls) + 1})")
-            if not use_item(lay, "Pokeballs", ball):
+            used = use_item(lay, "Pokeballs", ball, prefer=park)
+            if not used:
                 return "no bag", f"{ball} failed"
-            balls.append(ball)
+            balls.append(used)
+            park = None
         outcome, img, rgb, lay, msgs = wait_turn(lay)
         turns += 1
         if progress is not None:

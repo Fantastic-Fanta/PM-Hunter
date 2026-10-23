@@ -109,6 +109,7 @@
   ],
   "post": [],
   "catch": {
+    "park_ball": true,
     "first_ball": "Quick Ball",
     "sleep_move": "Yawn",
     "guard_move": "Protect",

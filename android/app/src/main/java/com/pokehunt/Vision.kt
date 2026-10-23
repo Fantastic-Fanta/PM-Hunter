@@ -237,6 +237,16 @@ object Vision {
         return b.h > 0 && f.share(b) { i -> max(f.r(i), max(f.g(i), f.b(i))) > 90 } > 0.003
     }
 
+    /** The bag's row at y is a favorite: its count tag ("x985") is yellow;
+     *  the others' are light blue. As pokehunt.py's favorited. */
+    fun favorited(f: Frame, texts: List<TextHit>, y: Double, v: Double): Boolean {
+        val count = texts.firstOrNull {
+            Regex("x[\\d,.]+", RegexOption.IGNORE_CASE).matches(it.text) && abs(it.y - y) < 30 * v
+        } ?: return false
+        val area = Box((count.x - 110 * v).toInt(), (count.y - 10 * v).toInt(), (count.x - 70 * v).toInt(), (count.y + 10 * v).toInt())
+        return f.share(area) { i -> f.r(i) > 200 && f.g(i) > 150 && f.b(i) < 150 } > 0.5
+    }
+
     /** Roblox's chat button: the right end of the dark pill (menu, chat) in
      *  the top-left corner. Roblox opens its chat window when messages come in,
      *  and on a phone it covers the game; this button closes it. */

@@ -159,6 +159,7 @@ class Config(json: String) {
 
     fun str(key: String) = catch[key]?.toString() ?: ""
     fun num(key: String) = (catch[key] as? Number)?.toDouble() ?: 0.0
+    fun flag(key: String) = catch[key] as? Boolean ?: false
 
     @Suppress("UNCHECKED_CAST")
     private fun rules(key: String): List<Map<String, Any>> {
@@ -171,6 +172,7 @@ class Config(json: String) {
         val DEBUG_WEBHOOK: String = BuildConfig.DEBUG_WEBHOOK
 
         val CATCH_PLAN: Map<String, Any> = mapOf(  // config "catch" overrides these
+            "park_ball" to true,  // a favorited Park Ball (it never misses) goes first, before first_ball
             "first_ball" to "Quick Ball", "sleep_move" to "Yawn", "guard_move" to "Protect",
             "asleep_ball" to "Repeat Ball", "awake_ball" to "Repeat Ball", "max_balls" to 8,
             "max_turns" to 30, "legendary_max_balls" to 30, "legendary_max_turns" to 90,
