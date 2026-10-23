@@ -29,10 +29,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use std::{env, thread};
 
-const NAME: &str = match option_env!("HUNT_NAME") {
-    Some(name) => name,
-    None => "dev",
-};
 const W: f32 = 340.0; // the pill
 const H: f32 = 40.0;
 const CONTROL: f32 = 26.0; // every button and box is this tall
@@ -56,8 +52,27 @@ const VANISH: f32 = 0.25; // s, the ball going
 const INK: Color32 = Color32::from_rgb(0x11, 0x11, 0x11);
 const PAPER: Color32 = Color32::WHITE;
 
+/// The build's number (higher is newer) and name, from build.json next to Hunt.exe
+/// (the Windows build writes it, so Hunt.exe itself is the same from build to build
+/// and is only built again when window/ changes); without it, a build of one's own (0, "dev").
+fn build() -> &'static (u64, String) {
+    static BUILD: std::sync::OnceLock<(u64, String)> = std::sync::OnceLock::new();
+    BUILD.get_or_init(|| {
+        let info = env::current_exe().ok()
+            .and_then(|exe| fs::read_to_string(exe.with_file_name("build.json")).ok())
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+        let get = |key| info.as_ref().and_then(|i| i.get(key).cloned());
+        (get("version").and_then(|v| v.as_u64()).unwrap_or(0),
+         get("name").and_then(|v| v.as_str().map(String::from)).unwrap_or_else(|| "dev".into()))
+    })
+}
+
 fn version() -> u64 {
-    option_env!("HUNT_VERSION").and_then(|v| v.parse().ok()).unwrap_or(0)
+    build().0
+}
+
+fn name() -> &'static str {
+    &build().1
 }
 
 fn site() -> String {
@@ -434,7 +449,7 @@ impl Hunt {
         self.code.clear();
         self.last_exit = None;
         let stamp = chrono_now();
-        self.say(&format!("\n--- {stamp} {mode} (build {NAME}) ---"));
+        self.say(&format!("\n--- {stamp} {mode} (build {}) ---", name()));
     }
 
     fn send(&mut self, cmd: &str) {
@@ -653,7 +668,7 @@ impl Hunt {
         let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
         thread::spawn(move || {
             let info = ureq::get(&format!("{}/windows.json", site()))
-                .set("User-Agent", &format!("Hunt (windows, {NAME})"))
+                .set("User-Agent", &format!("Hunt (windows, {})", name()))
                 .timeout(Duration::from_secs(15))
                 .call()
                 .ok()
@@ -684,7 +699,7 @@ impl Hunt {
                 let path = env::temp_dir().join(format!("PoopihuntSetup-{number}.exe"));
                 let part = path.with_extension("part");
                 let resp = ureq::get(&format!("{}/{file}", site()))
-                    .set("User-Agent", &format!("Hunt (windows, {NAME})"))
+                    .set("User-Agent", &format!("Hunt (windows, {})", name()))
                     .timeout(Duration::from_secs(300))
                     .call()
                     .map_err(|e| e.to_string())?;

@@ -33,7 +33,7 @@ for i in {1..30}; do  # the run that just started
 done
 [[ -n $id ]] || { echo "the build didn't start on GitHub"; exit 1; }
 echo "building $name: $(gh run view $id --json url --jq .url)"
-if ! gh run watch $id --exit-status --interval 20 > /dev/null; then
+if ! gh run watch $id --exit-status --interval 5 > /dev/null; then
   gh run view $id --log-failed | tail -40
   exit 1
 fi
