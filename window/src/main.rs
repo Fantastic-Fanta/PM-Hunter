@@ -39,6 +39,11 @@ const CONTROL: f32 = 26.0; // every button and box is this tall
 const INSET: f32 = (H - CONTROL) / 2.0; // the same room all round the pill's ends
 const TEXT: f32 = 13.0; // the words' size (a whole number draws crisper)
 
+// the opening: a big Clodsire mid-screen, then it shrinks into the pill's end
+const BIG: f32 = 150.0; // its size, at first
+const INTRO_MOVE: f32 = 0.8; // s: when it sets off (it's come in by then)
+const INTRO_END: f32 = 1.45; // s: when it's the pill's end, play in it
+
 const INK: Color32 = Color32::from_rgb(0x11, 0x11, 0x11);
 const PAPER: Color32 = Color32::WHITE;
 
@@ -155,6 +160,13 @@ enum Msg {
     UpdateFailed(String),
 }
 
+/// The opening's window: started once it's over the whole screen.
+struct Intro {
+    started: Option<Instant>,
+    origin: Pos2, // where the window is: the screen's corner, give or take
+    frames: u32,
+}
+
 struct Proc {
     id: u64,
     child: Arc<Mutex<Child>>,
@@ -207,7 +219,8 @@ struct Hunt {
     pos_saved: Option<Pos2>,
     pos_changed: Option<Instant>,
     was_found: String,
-    born: Option<Instant>, // the opening's start: its first frame
+    born: Option<Instant>, // the pill's own opening (stretching out from play): its first frame
+    intro: Option<Intro>,   // the big Clodsire, while it's on
     smoke: Option<Smoke>,
     start_now: bool, // the hunter starts with Hunt, paused (--start: hunting)
 }
@@ -271,6 +284,9 @@ impl Hunt {
             pos_changed: None,
             was_found: String::new(),
             born: None,
+            intro: ((!env::args().any(|a| a == "--smoke") || env::args().any(|a| a == "--intro"))
+                    && env::var_os("HUNT_NO_INTRO").is_none())
+                .then_some(Intro { started: None, origin: Pos2::ZERO, frames: 0 }),
             smoke: env::args().any(|a| a == "--smoke").then(Smoke::new),
             start_now: !env::args().any(|a| a == "--smoke"),
             paths,
@@ -705,6 +721,83 @@ impl Hunt {
         }
     }
 
+    /// The opening's window: the whole screen (see-through but for the big
+    /// Clodsire), then back over the pill once it's got there.
+    fn intro_window(&mut self, ctx: &egui::Context) {
+        let screen = self.monitor(ctx);
+        let outer = ctx.input(|i| i.viewport().outer_rect);
+        let Some(intro) = self.intro.as_mut() else { return };
+        intro.frames += 1;
+        if intro.frames == 1 {
+            let pos = self.pos.unwrap_or(pos2(((screen.x - W) / 2.0).round(), 60.0));
+            if pos.x < 0.0 || pos.y < 0.0 || pos.x + W > screen.x || pos.y + H > screen.y {
+                self.intro = None; // a pill on another screen: no opening
+                return;
+            }
+            self.pos = Some(pos);
+            ctx.send_viewport_cmd(ViewportCommand::OuterPosition(Pos2::ZERO));
+            ctx.send_viewport_cmd(ViewportCommand::InnerSize(screen));
+            return;
+        }
+        if intro.started.is_none() {
+            // it starts once the window's over the screen (or it's been a while)
+            if outer.is_some_and(|o| o.width() >= screen.x - 1.0) || intro.frames > 30 {
+                intro.started = Some(Instant::now());
+                intro.origin = outer.map(|o| o.min).unwrap_or(Pos2::ZERO);
+            }
+            ctx.request_repaint();
+            return;
+        }
+        if intro.started.is_some_and(|t| t.elapsed().as_secs_f32() >= INTRO_END) {
+            self.intro = None;
+            ctx.send_viewport_cmd(ViewportCommand::InnerSize(vec2(W, H)));
+            ctx.send_viewport_cmd(ViewportCommand::OuterPosition(self.pos.unwrap_or(Pos2::ZERO)));
+            self.pos_saved = self.pos; // (not a move of yours)
+            self.born = None; // the pill stretches out from here
+        }
+    }
+
+    fn draw_intro(&self, ui: &mut egui::Ui, t: f32, origin: Pos2) {
+        let ctx = ui.ctx().clone();
+        ctx.request_repaint();
+        // where the window is now (a Mac may still be moving it): the screen in its terms
+        let origin = ctx.input(|i| i.viewport().outer_rect).map(|o| o.min).unwrap_or(origin);
+        let painter = ui.painter().clone();
+        let screen = self.monitor(&ctx);
+        let ease_out = |x: f32| 1.0 - (1.0 - x.clamp(0.0, 1.0)).powi(3);
+        let ease = |x: f32| {
+            let x = x.clamp(0.0, 1.0);
+            if x < 0.5 { 4.0 * x * x * x } else { 1.0 - (-2.0 * x + 2.0).powi(3) / 2.0 }
+        };
+        let appear = ease_out(t / 0.4);
+        let travel = ease((t - INTRO_MOVE) / (INTRO_END - INTRO_MOVE));
+        let start = pos2(screen.x / 2.0, screen.y / 2.0) - origin.to_vec2();
+        let end = self.pos.unwrap_or(Pos2::ZERO) - origin.to_vec2() + vec2(H / 2.0, H / 2.0);
+        let center = start + (end - start) * travel;
+        let d = BIG * (0.85 + 0.15 * appear) * (1.0 - travel) + H * travel;
+        let rect = Rect::from_center_size(center, Vec2::splat(d));
+
+        let shadow = egui::Shadow { offset: [0, 10], blur: 40, spread: 0,
+                                    color: Color32::from_black_alpha((120.0 * appear * (1.0 - travel)) as u8) };
+        painter.add(shadow.as_shape(rect, d / 2.0));
+        painter.circle_filled(center, d / 2.0, gray(0x3a).gamma_multiply(appear)); // its hairline
+        painter.circle_filled(center, d / 2.0 - 1.0, INK.gamma_multiply(appear));
+        // Clodsire, giving way to the play button as it lands
+        let morph = ease((travel - 0.55) / 0.45);
+        if morph < 1.0 {
+            egui::Image::new(egui::include_image!("../../windows/hunt-icon.png"))
+                .tint(Color32::WHITE.gamma_multiply(appear * (1.0 - morph)))
+                .paint_at(ui, rect);
+        }
+        if morph > 0.0 {
+            let r = d / 2.0 * (CONTROL / H);
+            painter.circle_filled(center, r, PAPER.gamma_multiply(morph));
+            let s = r / (CONTROL / 2.0);
+            let pts = [vec2(-3.0, -5.0), vec2(-3.0, 5.0), vec2(5.5, 0.0)].map(|v| center + v * s).to_vec();
+            painter.add(egui::Shape::convex_polygon(pts, INK.gamma_multiply(morph), Stroke::NONE));
+        }
+    }
+
     // ------------------------------------------------------------ drawing
 
     fn draw(&mut self, ui: &mut egui::Ui) {
@@ -713,32 +806,19 @@ impl Hunt {
         let c = look(light);
         let r = H / 2.0;
 
-        // opening: Clodsire's circle comes in, stretches out into the pill, and
-        // gives way to what's in it
-        let t = self.born.get_or_insert_with(Instant::now).elapsed().as_secs_f32(); // from the first frame shown
+        // opening (after the big Clodsire): it stretches out from play, the rest fades in
+        let t = self.born.get_or_insert_with(Instant::now).elapsed().as_secs_f32();
         let ease = |x: f32| 1.0 - (1.0 - x.clamp(0.0, 1.0)).powi(3);
-        let (pop, grow, reveal) = (ease(t / 0.35), ease((t - 0.4) / 0.6), ease((t - 0.85) / 0.4));
+        let (grow, reveal) = (ease(t / 0.5), ease((t - 0.25) / 0.35));
         if reveal < 1.0 {
             ctx.request_repaint();
         }
-        let mut painter = ui.painter().clone();
-        painter.set_opacity(pop);
+        let painter = ui.painter().clone();
 
         // the outline; dragged by anything that isn't a button
-        let shape = Rect::from_min_size(Pos2::ZERO, vec2(H + (W - H) * grow, H))
-            .shrink((1.0 - pop) * H * 0.2);
-        painter.rect_filled(shape, shape.height() / 2.0, c.edge); // a hairline around it, for dark games
-        painter.rect_filled(shape.shrink(1.0), shape.height() / 2.0 - 1.0, c.fill);
-        if reveal < 1.0 {
-            let clodsire = egui::Image::new(egui::include_image!("../icons/clodsire-192.png"))
-                .tint(Color32::WHITE.gamma_multiply((1.0 - reveal) * pop));
-            clodsire.paint_at(ui, Rect::from_center_size(pos2(r, r), Vec2::splat(H * (0.8 + 0.2 * pop))));
-        }
-        if reveal <= 0.0 {
-            return;
-        }
-        ui.set_opacity(reveal);
-        let painter = ui.painter().clone();
+        let shape = Rect::from_min_size(Pos2::ZERO, vec2(H + (W - H) * grow, H));
+        painter.rect_filled(shape, r, c.edge); // a hairline around it, for dark games
+        painter.rect_filled(shape.shrink(1.0), r - 1.0, c.fill);
         let bg = ui.interact(shape, Id::new("bg"), Sense::click_and_drag());
         if bg.drag_started() {
             ctx.send_viewport_cmd(ViewportCommand::StartDrag);
@@ -771,6 +851,12 @@ impl Hunt {
         if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
             self.main_button();
         }
+
+        if reveal <= 0.0 {
+            return;
+        }
+        ui.set_opacity(reveal);
+        let painter = ui.painter().clone();
 
         // the website code (or a word: Done, Stopped, an update's progress), which opens the website
         let left = main.x + CONTROL / 2.0 + 12.0;
@@ -906,7 +992,11 @@ impl eframe::App for Hunt {
         if ctx.input(|i| i.viewport().close_requested()) {
             self.stop();
         }
-        self.track_place(ctx);
+        if self.intro.is_some() {
+            self.intro_window(ctx);
+        } else {
+            self.track_place(ctx);
+        }
         if std::mem::take(&mut self.start_now) {
             self.start(Self::hunt_mode(), !env::args().any(|a| a == "--start"));
         }
@@ -914,7 +1004,13 @@ impl eframe::App for Hunt {
             smoke.step(self, ctx);
             self.smoke = Some(smoke);
         }
-        egui::CentralPanel::default().frame(egui::Frame::default()).show(ctx, |ui| self.draw(ui));
+        egui::CentralPanel::default().frame(egui::Frame::default()).show(ctx, |ui| {
+            match self.intro.as_ref().and_then(|i| Some((i.started?, i.origin))) {
+                Some((t0, origin)) => self.draw_intro(ui, t0.elapsed().as_secs_f32(), origin),
+                None if self.intro.is_some() => {} // the window's getting to its size
+                None => self.draw(ui),
+            }
+        });
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
