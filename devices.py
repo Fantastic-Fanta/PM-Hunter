@@ -178,6 +178,13 @@ class Desktop:
                 time.sleep(0.05)
                 _win_key(0x08)  # backspace
                 time.sleep(0.05)
+                # and whatever select all didn't take, from the end back (a search box
+                # holds a name or two: "Park Ball", "Max Elixir")
+                _win_key(0x23, extended=True)  # End
+                for _ in range(24):
+                    time.sleep(0.012)
+                    _win_key(0x08)
+                time.sleep(0.05)
             for ch in text:
                 _win_char(ch)
                 time.sleep(0.04)
@@ -349,15 +356,26 @@ def _key(vk=0, scan=0, flags=0):
     return _INPUT(type=1, u=_INPUTUNION(ki=_KEYBDINPUT(wVk=vk, wScan=scan, dwFlags=flags)))
 
 
-def _win_key(vk):
-    scan = ctypes.windll.user32.MapVirtualKeyW(vk, 0)
-    _send(_key(vk, scan), _key(vk, scan, _KEYUP))
+def _win_key(vk, extended=False):
+    """A key, by its scan code too (Roblox goes by those). extended: End, Delete, the
+    arrows (the ones beside the letters, not the number pad's)."""
+    scan, ext = ctypes.windll.user32.MapVirtualKeyW(vk, 0), 0x0001 if extended else 0
+    _send(_key(vk, scan, ext), _key(vk, scan, ext | _KEYUP))
 
 
 def _win_select_all():
-    """Ctrl+A."""
+    """Ctrl+A, with scan codes, and Ctrl held a few frames round the A (Roblox looks at
+    the keys once a frame: sent all at once it saw no Ctrl)."""
+    user32 = ctypes.windll.user32
     ctrl, a = 0x11, 0x41
-    _send(_key(ctrl), _key(a), _key(a, flags=_KEYUP), _key(ctrl, flags=_KEYUP))
+    cs, as_ = user32.MapVirtualKeyW(ctrl, 0), user32.MapVirtualKeyW(a, 0)
+    _send(_key(ctrl, cs))
+    time.sleep(0.05)
+    _send(_key(a, as_))
+    time.sleep(0.05)
+    _send(_key(a, as_, _KEYUP))
+    time.sleep(0.03)
+    _send(_key(ctrl, cs, _KEYUP))
 
 
 def _win_char(ch):
