@@ -93,8 +93,8 @@ jobs:
             $bmp.Save("$env:HUNT_DATA\$name.png")
           }
           Start-Process dist\Hunt\Hunt.exe -ArgumentList "--smoke", "--intro"
-          Start-Sleep -Seconds 1.2; Picture "opening"  # the big Clodsire, on its way
-          Start-Sleep -Seconds 4; Picture "screen"     # the pill
+          Start-Sleep -Seconds 1.2; Picture "opening"  # the big Clodsire on its way (on OpenGL; none here)
+          Start-Sleep -Seconds 1.8; Picture "screen"   # the pill
           # (it may have started again on Direct3D, as another process: smoke.txt says when it's done)
           for ($i = 0; $i -lt 40 -and -not (Test-Path "$env:HUNT_DATA\smoke.txt"); $i++) { Start-Sleep -Milliseconds 500 }
           Get-Content "$env:HUNT_DATA\hunt.log" -ErrorAction SilentlyContinue | Select-String "window"

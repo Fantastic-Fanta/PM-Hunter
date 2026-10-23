@@ -284,8 +284,9 @@ impl Hunt {
             pos_changed: None,
             was_found: String::new(),
             born: None,
+            // (only where it's see-through: on Direct3D the window over the screen would be black)
             intro: ((!env::args().any(|a| a == "--smoke") || env::args().any(|a| a == "--intro"))
-                    && env::var_os("HUNT_NO_INTRO").is_none())
+                    && env::var_os("HUNT_NO_INTRO").is_none() && env::var_os("HUNT_RENDERER").is_none())
                 .then_some(Intro { started: None, origin: Pos2::ZERO, frames: 0 }),
             smoke: env::args().any(|a| a == "--smoke").then(Smoke::new),
             start_now: !env::args().any(|a| a == "--smoke"),
