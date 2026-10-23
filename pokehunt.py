@@ -1674,14 +1674,19 @@ def menu_button(hit, texts, retry):
 def save_game(wait=0.0):
     """MENU -> Save -> dismiss the message -> close MENU, between
     encounters. True if the game saved; if it said to wait, save_wait has
-    how long. wait: s to look for MENU's tab in."""
-    if not menu_open(screen_texts(grab())):  # (open already, after the bag: straight to Save)
+    how long. wait: s to look for MENU's tab in. MENU and Save are clicked at once
+    where they were last (quick_menu), read otherwise."""
+    step, saved, shown, saved_at, tries, tab, tab_at = "save", False, False, 0.0, 0, None, 0.0
+    quick = quick_menu("save", "save")
+    if quick:
+        step, saved_at = "message", time.time()
+    elif not menu_open(screen_texts(grab())):  # (open already: straight to Save)
         tab = menu_tab(wait)
         if not tab:
             return False
         trace(f"save: MENU at ({tab[0]:.0f}, {tab[1]:.0f})")
         click_at(*tab)
-    step, saved, shown, saved_at, tries = "save", False, False, 0.0, 0
+        tab_at = time.time()
     end = time.time() + 20
     while time.time() < end:
         time.sleep(0.4)
@@ -1695,7 +1700,14 @@ def save_game(wait=0.0):
                 at = menu_button(hit, texts, retry=tries > 0)
                 trace(f"save: clicking Save at ({at[0]:.0f}, {at[1]:.0f})")
                 click_at(*at)
+                remember_menu(img, texts, tab)
                 step, saved_at = "message", time.time()
+            elif not menu_open(texts) and time.time() - tab_at > 2:  # (closed: the quick clicks missed)
+                tab = next(((x, y) for t, x, y in texts if norm(t) == "menu"), None)
+                if tab:
+                    trace(f"save: MENU at ({tab[0]:.0f}, {tab[1]:.0f})")
+                    click_at(*tab)
+                    tab_at = time.time()
         elif step == "message":
             msg = next(((t, x, y) for t, x, y in texts if save_message(t)), None)
             if msg:
@@ -1712,7 +1724,7 @@ def save_game(wait=0.0):
                 time.sleep(0.6)
             elif shown:  # the message was there and is gone now
                 step = "close"
-            elif time.time() - saved_at > 4 and tries < 2:  # the click on Save didn't take
+            elif time.time() - saved_at > (2.5 if quick and not tries else 4) and tries < 2:  # Save didn't take
                 tries += 1
                 trace("save: no message yet, clicking Save again")
                 step = "save"
@@ -1759,16 +1771,65 @@ def menu_tab(seconds=0.0):
         time.sleep(0.3)
 
 
-def open_bag(why):
-    """MENU -> Bag, between encounters. True once Bag's clicked (the bag's on its way)."""
-    tab = menu_tab(12)  # (out of the battle first: it can take a few seconds to go)
-    if not tab:
+# Where MENU's tab, its Bag and its Save were last clicked, by screen size: clicked at
+# once the next time (an encounter can come in the second it takes to read them again)
+menu_spots = {}
+
+
+def remember_menu(img, texts, tab):
+    """MENU's tab (if it was read) and every item in the open MENU, for quick_menu."""
+    if tab:
+        menu_spots[(img.size, "menu")] = tab
+    for t, x, y in texts:
+        if norm(t) in ("bag", "save"):
+            menu_spots[(img.size, norm(t))] = menu_button((x, y), texts, retry=False)
+
+
+def quick_menu(item, why):
+    """MENU's tab, then item ("bag", "save"), at once where they were last; True if both
+    were known (whether it worked shows in what comes next: the bag, the message)."""
+    img = grab()
+    tab, at = menu_spots.get((img.size, "menu")), menu_spots.get((img.size, item))
+    if not (tab and at) or find_mute(load_rgb(img)):
         return False
-    trace(f"{why}: MENU at ({tab[0]:.0f}, {tab[1]:.0f})")
+    trace(f"{why}: MENU and {item.title()} where they were")
     click_at(*tab)
+    time.sleep(0.35)
+    click_at(*at)
+    return True
+
+
+def bag_up(seconds):
+    """The bag is open (its Close and its tabs read) within seconds."""
+    end = time.time() + seconds
+    while time.time() < end:
+        texts = screen_texts(grab())
+        if any(t.lower() == "close" for t, _, _ in texts) and any(norm(t) in ("recover", "recovers", "backpack")
+                                                                  for t, _, _ in texts):
+            return True
+        time.sleep(0.2)
+    return False
+
+
+def open_bag(why):
+    """MENU -> Bag, between encounters, as quickly as it can (an encounter can come any
+    moment). True once the bag's open or on its way."""
+    end = time.time() + 12  # out of the battle first (its last words can take seconds): watched, not read
+    while time.time() < end and find_mute(load_rgb(grab())):
+        time.sleep(0.15)
+    if quick_menu("bag", why) and bag_up(2.5):
+        return True
+    texts = screen_texts(grab())
+    tab = None
+    if not menu_open(texts):
+        tab = menu_tab(6)
+        if not tab:
+            return False
+        trace(f"{why}: MENU at ({tab[0]:.0f}, {tab[1]:.0f})")
+        click_at(*tab)
     end = time.time() + 8
     while time.time() < end:
-        time.sleep(0.4)
+        time.sleep(0.3)
         img = grab()
         texts = screen_texts(img)
         if find_mute(load_rgb(img)):
@@ -1778,6 +1839,7 @@ def open_bag(why):
             at = menu_button(hit, texts, retry=False)
             trace(f"{why}: clicking Bag at ({at[0]:.0f}, {at[1]:.0f})")
             click_at(*at)
+            remember_menu(img, texts, tab)
             return True
     say(f"  (couldn't open the Bag from the MENU: {snapshot(img, why + '-menu')})")
     clear_leftovers()
