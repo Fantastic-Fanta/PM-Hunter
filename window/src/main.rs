@@ -1162,7 +1162,7 @@ fn main() -> eframe::Result {
     // Direct3D instead, square: Hunt starts again that way (one window per run).
     let direct3d = env::var_os("HUNT_RENDERER").is_some_and(|r| r == "wgpu");
     let renderer = if direct3d { eframe::Renderer::Wgpu } else { eframe::Renderer::Glow };
-    let options = eframe::NativeOptions { viewport, renderer, ..Default::default() };
+    let options = eframe::NativeOptions { viewport, renderer, wgpu_options: direct3d_anywhere(), ..Default::default() };
     let result = eframe::run_native("Hunt", options, Box::new(|cc| Ok(Box::new(Hunt::new(cc)))));
     if let Err(e) = &result {
         note(&format!("Hunt's window didn't open ({}): {e}", if direct3d { "Direct3D" } else { "OpenGL" }));
@@ -1174,6 +1174,31 @@ fn main() -> eframe::Result {
         }
     }
     result
+}
+
+/// Direct3D on a graphics card, or else on Windows' own software one (WARP),
+/// which wgpu passes over by itself: a PC with no graphics driver still gets a window.
+fn direct3d_anywhere() -> eframe::egui_wgpu::WgpuConfiguration {
+    use eframe::egui_wgpu::{WgpuConfiguration, WgpuSetup, WgpuSetupCreateNew};
+    use eframe::wgpu::DeviceType;
+    let pick: eframe::egui_wgpu::NativeAdapterSelectorMethod = Arc::new(|adapters, surface| {
+        adapters
+            .iter()
+            .filter(|a| surface.is_none_or(|s| a.is_surface_supported(s)))
+            .min_by_key(|a| match a.get_info().device_type {
+                DeviceType::DiscreteGpu => 0,
+                DeviceType::IntegratedGpu => 1,
+                DeviceType::VirtualGpu => 2,
+                DeviceType::Other => 3,
+                DeviceType::Cpu => 4,
+            })
+            .cloned()
+            .ok_or_else(|| format!("none of the {} graphics adapters can draw it", adapters.len()))
+    });
+    WgpuConfiguration {
+        wgpu_setup: WgpuSetup::CreateNew(WgpuSetupCreateNew { native_adapter_selector: Some(pick), ..Default::default() }),
+        ..Default::default()
+    }
 }
 
 /// A line in hunt.log from before (or after) the window: what went wrong.
