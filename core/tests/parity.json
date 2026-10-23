@@ -1,0 +1,706 @@
+{
+ "bag-favorites.png": {
+  "size": [
+   2000,
+   1249
+  ],
+  "mute": null,
+  "chat_button": [
+   182.2,
+   82.0
+  ],
+  "chat_open": false,
+  "menu_tab": null,
+  "use_button": [
+   1378.5,
+   1062.5
+  ],
+  "red_blobs": 0
+ },
+ "bag-open.png": {
+  "size": [
+   2000,
+   1249
+  ],
+  "mute": null,
+  "chat_button": [
+   182.2,
+   82.0
+  ],
+  "chat_open": false,
+  "menu_tab": null,
+  "use_button": null,
+  "red_blobs": 0
+ },
+ "bag-quickball-selected.png": {
+  "size": [
+   2000,
+   1249
+  ],
+  "mute": null,
+  "chat_button": [
+   182.2,
+   82.0
+  ],
+  "chat_open": false,
+  "menu_tab": null,
+  "use_button": [
+   1378.5,
+   1062.5
+  ],
+  "red_blobs": 0
+ },
+ "dewpider-mirage.png": {
+  "size": [
+   2000,
+   1249
+  ],
+  "mute": [
+   1533,
+   153,
+   1749,
+   218
+  ],
+  "chat_button": [
+   182.2,
+   82.0
+  ],
+  "chat_open": true,
+  "menu_tab": null,
+  "use_button": null,
+  "red_blobs": 21,
+  "flat": {
+   "menu_ready": true,
+   "box_visible": true,
+   "chat_showing": false
+  },
+  "cal": {
+   "fit": [
+    0.9996102672024892,
+    0.9996352491112838,
+    -0.18385644722558656,
+    0.07336981401590995
+   ],
+   "miss": 0.872654808413472,
+   "colors": {
+    "fight": [
+     210,
+     219,
+     189
+    ],
+    "switch": [
+     145,
+     170,
+     157
+    ],
+    "bag": [
+     61,
+     92,
+     111
+    ],
+    "run": [
+     26,
+     51,
+     66
+    ],
+    "box": [
+     143,
+     143,
+     143
+    ]
+   }
+  },
+  "fitted": {
+   "menu_ready": true,
+   "box_visible": true,
+   "chat_showing": false,
+   "icons": [
+    false,
+    false,
+    false
+   ],
+   "run": [
+    1567.803,
+    1069.739
+   ],
+   "box": [
+    370,
+    317,
+    890,
+    534
+   ]
+  },
+  "sprite_sum": 4639884
+ },
+ "fight-menu.png": {
+  "size": [
+   2000,
+   1249
+  ],
+  "mute": [
+   1533,
+   153,
+   1749,
+   218
+  ],
+  "chat_button": [
+   182.2,
+   82.0
+  ],
+  "chat_open": false,
+  "menu_tab": null,
+  "use_button": null,
+  "red_blobs": 33,
+  "flat": {
+   "menu_ready": false,
+   "box_visible": true,
+   "chat_showing": false
+  },
+  "cal": null
+ },
+ "marill-inferno-tint.png": {
+  "size": [
+   2000,
+   1249
+  ],
+  "mute": [
+   1533,
+   153,
+   1749,
+   218
+  ],
+  "chat_button": [
+   182.2,
+   82.0
+  ],
+  "chat_open": false,
+  "menu_tab": null,
+  "use_button": null,
+  "red_blobs": 24,
+  "flat": {
+   "menu_ready": true,
+   "box_visible": true,
+   "chat_showing": false
+  },
+  "cal": {
+   "fit": [
+    0.9996102672024892,
+    0.9996352491112838,
+    -0.18385644722558656,
+    0.07336981401590995
+   ],
+   "miss": 0.872654808413472,
+   "colors": {
+    "fight": [
+     210,
+     219,
+     189
+    ],
+    "switch": [
+     145,
+     170,
+     157
+    ],
+    "bag": [
+     61,
+     92,
+     111
+    ],
+    "run": [
+     26,
+     51,
+     66
+    ],
+    "box": [
+     143,
+     143,
+     143
+    ]
+   }
+  },
+  "fitted": {
+   "menu_ready": true,
+   "box_visible": true,
+   "chat_showing": false,
+   "icons": [
+    false,
+    true,
+    false
+   ],
+   "run": [
+    1567.803,
+    1069.739
+   ],
+   "box": [
+    370,
+    317,
+    890,
+    534
+   ]
+  },
+  "sprite_sum": 3913266
+ },
+ "menu-open.png": {
+  "size": [
+   2000,
+   1249
+  ],
+  "mute": null,
+  "chat_button": null,
+  "chat_open": null,
+  "menu_tab": [
+   230.0,
+   442.0
+  ],
+  "tab_look": [
+   99.3,
+   161.3,
+   238.3
+  ],
+  "use_button": null,
+  "red_blobs": 11
+ },
+ "phone-pikachu-shiny.png": {
+  "size": [
+   1692,
+   1028
+  ],
+  "mute": [
+   1297,
+   167,
+   1480,
+   219
+  ],
+  "chat_button": [
+   208.0,
+   124.0
+  ],
+  "chat_open": false,
+  "menu_tab": null,
+  "use_button": null,
+  "red_blobs": 3,
+  "flat": {
+   "menu_ready": false,
+   "box_visible": true,
+   "chat_showing": false
+  },
+  "cal": {
+   "fit": [
+    0.9986599126591515,
+    0.9277225397768042,
+    -0.21209934685423748,
+    0.20937974819830776
+   ],
+   "miss": 0.7334439603454852,
+   "colors": {
+    "fight": [
+     211,
+     219,
+     192
+    ],
+    "switch": [
+     150,
+     169,
+     157
+    ],
+    "run": [
+     32,
+     51,
+     64
+    ],
+    "box": [
+     143,
+     143,
+     143
+    ]
+   }
+  },
+  "fitted": {
+   "menu_ready": true,
+   "box_visible": true,
+   "chat_showing": false,
+   "icons": [
+    true,
+    false,
+    false
+   ],
+   "run": [
+    1326.433,
+    887.928
+   ],
+   "box": [
+    312,
+    296,
+    752,
+    467
+   ]
+  },
+  "sprite_sum": 2041530
+ },
+ "phone16-pichu-shiny.png": {
+  "size": [
+   1200,
+   540
+  ],
+  "mute": [
+   883,
+   52,
+   999,
+   81
+  ],
+  "chat_button": [
+   248.8,
+   44.5
+  ],
+  "chat_open": false,
+  "menu_tab": null,
+  "use_button": null,
+  "red_blobs": 11,
+  "flat": {
+   "menu_ready": false,
+   "box_visible": false,
+   "chat_showing": false
+  },
+  "cal": {
+   "fit": [
+    0.9904872038251301,
+    0.8300547726961084,
+    1.1244073700223594,
+    0.11685730041994367
+   ],
+   "miss": 0.9938286933906529,
+   "colors": {
+    "fight": [
+     209,
+     219,
+     189
+    ],
+    "switch": [
+     145,
+     170,
+     156
+    ],
+    "bag": [
+     62,
+     92,
+     111
+    ],
+    "run": [
+     25,
+     52,
+     65
+    ],
+    "box": [
+     143,
+     143,
+     143
+    ]
+   }
+  },
+  "fitted": {
+   "menu_ready": true,
+   "box_visible": true,
+   "chat_showing": false,
+   "icons": [
+    true,
+    false,
+    false
+   ],
+   "run": [
+    902.221,
+    460.834
+   ],
+   "box": [
+    264,
+    125,
+    541,
+    222
+   ]
+  },
+  "sprite_sum": 1679830
+ },
+ "quaxly-shiny.png": {
+  "size": [
+   2000,
+   1249
+  ],
+  "mute": [
+   1533,
+   153,
+   1749,
+   218
+  ],
+  "chat_button": [
+   182.2,
+   82.0
+  ],
+  "chat_open": false,
+  "menu_tab": null,
+  "use_button": null,
+  "red_blobs": 19,
+  "flat": {
+   "menu_ready": true,
+   "box_visible": true,
+   "chat_showing": false
+  },
+  "cal": {
+   "fit": [
+    0.9996102672024892,
+    0.9996352491112838,
+    -0.18385644722558656,
+    0.07336981401590995
+   ],
+   "miss": 0.872654808413472,
+   "colors": {
+    "fight": [
+     210,
+     219,
+     189
+    ],
+    "switch": [
+     145,
+     170,
+     157
+    ],
+    "bag": [
+     61,
+     92,
+     111
+    ],
+    "run": [
+     26,
+     51,
+     66
+    ],
+    "box": [
+     143,
+     143,
+     143
+    ]
+   }
+  },
+  "fitted": {
+   "menu_ready": true,
+   "box_visible": true,
+   "chat_showing": false,
+   "icons": [
+    true,
+    false,
+    false
+   ],
+   "run": [
+    1567.803,
+    1069.739
+   ],
+   "box": [
+    370,
+    317,
+    890,
+    534
+   ]
+  },
+  "sprite_sum": 4914084
+ },
+ "remoraid-shiny.png": {
+  "size": [
+   2000,
+   1249
+  ],
+  "mute": [
+   1533,
+   153,
+   1749,
+   218
+  ],
+  "chat_button": [
+   182.2,
+   82.0
+  ],
+  "chat_open": false,
+  "menu_tab": null,
+  "use_button": null,
+  "red_blobs": 25,
+  "flat": {
+   "menu_ready": true,
+   "box_visible": true,
+   "chat_showing": false
+  },
+  "cal": {
+   "fit": [
+    0.9996102672024892,
+    0.9996352491112838,
+    -0.18385644722558656,
+    0.07336981401590995
+   ],
+   "miss": 0.872654808413472,
+   "colors": {
+    "fight": [
+     210,
+     219,
+     189
+    ],
+    "switch": [
+     145,
+     170,
+     157
+    ],
+    "bag": [
+     61,
+     92,
+     111
+    ],
+    "run": [
+     26,
+     51,
+     66
+    ],
+    "box": [
+     143,
+     143,
+     143
+    ]
+   }
+  },
+  "fitted": {
+   "menu_ready": true,
+   "box_visible": true,
+   "chat_showing": false,
+   "icons": [
+    true,
+    false,
+    false
+   ],
+   "run": [
+    1567.803,
+    1069.739
+   ],
+   "box": [
+    370,
+    317,
+    890,
+    534
+   ]
+  },
+  "sprite_sum": 4904903
+ },
+ "save-done.png": {
+  "size": [
+   2000,
+   1249
+  ],
+  "mute": null,
+  "chat_button": [
+   414.6,
+   112.5
+  ],
+  "chat_open": false,
+  "menu_tab": null,
+  "use_button": null,
+  "red_blobs": 13
+ },
+ "shellos-tint.png": {
+  "size": [
+   2000,
+   1249
+  ],
+  "mute": [
+   1533,
+   153,
+   1749,
+   218
+  ],
+  "chat_button": [
+   182.2,
+   82.0
+  ],
+  "chat_open": false,
+  "menu_tab": null,
+  "use_button": null,
+  "red_blobs": 68,
+  "flat": {
+   "menu_ready": true,
+   "box_visible": true,
+   "chat_showing": false
+  },
+  "cal": {
+   "fit": [
+    0.9996102672024892,
+    0.9996352491112838,
+    -0.18385644722558656,
+    0.07336981401590995
+   ],
+   "miss": 0.872654808413472,
+   "colors": {
+    "fight": [
+     210,
+     219,
+     189
+    ],
+    "switch": [
+     145,
+     170,
+     157
+    ],
+    "bag": [
+     61,
+     92,
+     111
+    ],
+    "run": [
+     26,
+     51,
+     66
+    ],
+    "box": [
+     143,
+     143,
+     143
+    ]
+   }
+  },
+  "fitted": {
+   "menu_ready": true,
+   "box_visible": true,
+   "chat_showing": false,
+   "icons": [
+    false,
+    true,
+    false
+   ],
+   "run": [
+    1567.803,
+    1069.739
+   ],
+   "box": [
+    370,
+    317,
+    890,
+    534
+   ]
+  },
+  "sprite_sum": 4765197
+ },
+ "side-tabs.png": {
+  "size": [
+   616,
+   1488
+  ],
+  "mute": null,
+  "chat_button": [
+   114.4,
+   66.0
+  ],
+  "chat_open": false,
+  "menu_tab": [
+   46.0,
+   269.5
+  ],
+  "tab_look": [
+   82.8,
+   156.0,
+   248.0
+  ],
+  "use_button": null,
+  "red_blobs": 0
+ }
+}

@@ -1,0 +1,29 @@
+# Hunt in Rust: the hunter (core/) is the same on every platform; window/ is
+# Hunt for Mac and Windows (the pill, the hunter in it, the screen, mouse and
+# text recognition of each), android/rust/ the hunter for the Android app.
+[workspace]
+resolver = "2"
+members = ["core"]
+default-members = ["core"]
+
+[workspace.package]
+edition = "2021"
+publish = false
+
+[workspace.dependencies]
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+ureq = { version = "2.12", features = ["json"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+# the pictures' work (finding the Mute button, reading colors) is fast even in a debug build
+[profile.dev.package."*"]
+opt-level = 2
+[profile.dev.package.hunt-core]
+opt-level = 2

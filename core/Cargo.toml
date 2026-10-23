@@ -1,0 +1,15 @@
+[package]
+name = "hunt-core"
+version = "1.0.0"
+description = "The hunter, the same on every platform: reads each encounter, runs from the ones not wanted, catches the ones worth a ball"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+image.workspace = true
+serde_json.workspace = true
+ureq.workspace = true
+base64 = "0.22"
+regex = "1"
+getrandom = "0.2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
