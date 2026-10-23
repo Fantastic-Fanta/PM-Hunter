@@ -27,26 +27,28 @@ open it, and Hunt is in the Start menu and on the desktop (no admin, no
 Python). Windows warns about it at first ("Windows protected your PC": **More
 info > Run anyway**) because the installer isn't signed.
 
-The window (Hunt.exe, Rust: `window/`) is a pill with no frame, dragged anywhere:
-start / stop (play again after a find or Ctrl+Shift+H carries on), the website
-code (click it for the website), a box for the Discord webhook (saved in
-config.json; a hunt that's on starts again with it; right click pastes), and
-**•••**, which grows the pill down into a panel (in about half a second; lifted
-only if the bottom of the screen is in the way):
-**Debug mode** (the next encounter caught with a screenshot every turn, the
-game saved, then it turns itself off), **Preferred ball** (Optimal: a
-first-turn Quick Ball, Repeat Balls, Timer Balls once 9 turns have gone by;
-a ball's name, such as Park Ball or Master Ball, is the only ball thrown), and a row of **Update**, **Folder** and **Quit**. A find turns the pill white. The hunter itself
-is pokehunt.py (hunt-engine.exe), run by the window with `--window`; the
-panel's switch reaches it as lines (`test on`, `test off`). What a PC keeps
-(config.json, finds, calibration, the website key, window.json for the
-window's place) is in `%LOCALAPPDATA%\Hunt` (**Folder**), with
-hunt.log: all the hunter printed (hunt.old.log past 5 MB). A new config.json
-has no rules, so every reskin with a gradient is caught; anything more
-(targets, the catch plan) is edited in that file. Hunt checks
-https://poopihunt.xyz/windows.json when it starts (and every 6 hours); a newer
-build puts a dot on **•••** and lights **Update** in the panel, which installs it
-and restarts.
+The window (Hunt.exe, Rust: `window/`, egui) is one pill with no frame, on top
+of every window but out of screenshots (the hunter's look through it), dragged
+anywhere: start / stop (play again after a find or Ctrl+Shift+H carries on; a
+right click is **Debug mode**: it hunts at once, fits the layout at the next
+encounter, catches that one with a screenshot every turn and saves, then turns
+itself off), the website code (there from the start: the hunter runs paused
+from when Hunt opens; click it for the website), a box for the Discord
+webhook (saved in config.json; a hunt that's on starts again with it), Hunt's
+folder and quit. It opens with Clodsire (`windows/hunt-icon.png`) big in the
+middle of the dimmed screen, flying into the pill's end as play; it closes
+by shrinking right into a ball. A find turns it white. The hunter itself is
+pokehunt.py (hunt-engine.exe), run by the window with `--window --paused`; the
+window's buttons reach it as lines (`toggle`, `test on`, `test off`). It
+catches the optimal way (a Quick Ball first, Repeat Balls, Timer Balls once 9
+turns have gone by; a favorited Park Ball before all of them), unless
+config.json's `catch` says otherwise. What a PC keeps (config.json, finds,
+calibration, the website key, window.json for the pill's place) is in
+`%LOCALAPPDATA%\Hunt`, with hunt.log: all the hunter printed (hunt.old.log
+past 5 MB). A new config.json has no rules, so every reskin with a gradient is
+caught; anything more (targets, the catch plan) is edited in that file. Hunt
+checks https://poopihunt.xyz/windows.json when it opens and whenever a hunt
+stops; a newer build is downloaded, installed, and Hunt starts again.
 
 `./publish-windows.sh` builds it on GitHub (`.github/workflows/windows.yml`:
 PyInstaller with `windows/hunt.spec`, Inno Setup with `windows/hunt.iss`,
@@ -58,7 +60,9 @@ as a check. On a Mac the same window runs the Python hunter:
 
     HUNT_ENGINE="$PWD/.venv/bin/python -u $PWD/pokehunt.py" HUNT_DATA=$PWD cargo run --manifest-path window/Cargo.toml
 
-(`HUNT_WATCH=1` too, for one that never clicks; `--start` presses play.)
+(`HUNT_WATCH=1` too, for one that never clicks; `--start` hunts at once,
+`HUNT_PREVIEW=1` never does; `--smoke --intro` goes through its states with
+the opening and the closing.) The icon: `python windows/make_icon.py`.
 
 Published builds report what they print, their errors, and screenshots of
 calibration, trouble, finds and the first 10 clicks to the Windows debug
