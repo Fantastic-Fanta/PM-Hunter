@@ -262,7 +262,7 @@ struct Hunt {
     install_when_stopped: bool,
     install_when_paused: bool,
     downloading: bool, // an update's on its way down
-    stopped_by_you: bool, // stop pressed: once it's paused, a look for a new build
+    was_hunting: bool, // the last state's: a stop is when it goes, and a look for a newer build
 
     pos: Option<Pos2>,
     pos_saved: Option<Pos2>,
@@ -333,7 +333,7 @@ impl Hunt {
             install_when_stopped: false,
             install_when_paused: false,
             downloading: false,
-            stopped_by_you: false,
+            was_hunting: false,
             pos,
             pos_saved: pos,
             pos_changed: None,
@@ -352,7 +352,7 @@ impl Hunt {
             paths,
         };
         hunt.hook = hunt.hook_saved();
-        hunt.look_for_update(true);
+        hunt.check_update();
         if let (Some(smoke), true) = (hunt.smoke.as_mut(), hunt.intro.is_some()) {
             smoke.after = INTRO_END + 0.8;
         }
@@ -530,8 +530,8 @@ impl Hunt {
         self.was_found = if found { enc } else { String::new() };
         let hunting = flag("running") || flag("remote");
         self.state = s;
-        if !hunting && std::mem::take(&mut self.stopped_by_you) {
-            self.check_update();
+        if std::mem::replace(&mut self.was_hunting, hunting) && !hunting {
+            self.check_update(); // a hunt's stopped (you, a find, Ctrl+Shift+H): a newer build goes on now
         }
         if !hunting && self.install_when_paused && self.was_found.is_empty() {
             // (not with a find held on screen for you: Hunt stays, keeping Roblox awake)
@@ -587,9 +587,6 @@ impl Hunt {
         if !self.running() {
             self.start(Self::hunt_mode(), false);
         } else {
-            if self.hunting() {
-                self.stopped_by_you = true;
-            }
             self.send("toggle");
         }
     }
@@ -666,17 +663,11 @@ impl Hunt {
     /// When Hunt opens and whenever a hunt stops: a newer build on the website?
     /// It's downloaded, installed, and Hunt starts again (the installer starts it).
     fn check_update(&self) {
-        self.look_for_update(false);
-    }
-
-    /// A look at the website for a newer build (Msg::Update), and with every, one each
-    /// 30 minutes after it while Hunt's open (a hunt can go on for days).
-    fn look_for_update(&self, every: bool) {
         if version() == 0 {
             return; // a build of one's own
         }
         let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
-        thread::spawn(move || loop {
+        thread::spawn(move || {
             let info = ureq::get(&format!("{}/windows.json", site()))
                 .set("User-Agent", &format!("Hunt (windows, {})", name()))
                 .timeout(Duration::from_secs(15))
@@ -690,17 +681,13 @@ impl Hunt {
                     ctx.request_repaint();
                 }
             }
-            if !every {
-                return;
-            }
-            thread::sleep(Duration::from_secs(30 * 60));
         });
     }
 
-    /// A newer build: downloaded at once (the hunter's always there, paused from when
-    /// Hunt opens, so not waiting for it to be gone), and installed once a hunt isn't
-    /// on (as it's downloaded, or when it stops); while hunting it's quiet about it,
-    /// the website code stays in the pill.
+    /// A newer build, seen when Hunt opens or a hunt stops: downloaded and installed
+    /// at once (the hunter's always there, paused from when Hunt opens, so not waiting
+    /// for it to be gone). If a hunt's started meanwhile, it's installed when that stops,
+    /// and till then it's quiet about it (the website code stays in the pill).
     fn download_update(&mut self) {
         let Some(info) = self.update.clone() else { return };
         if self.downloading || self.installer.is_some() {

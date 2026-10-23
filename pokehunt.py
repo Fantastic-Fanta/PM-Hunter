@@ -1783,11 +1783,18 @@ def menu_open(texts):
 def menu_button(hit, texts, retry):
     """Where to click a MENU item: its tile, half a row above its label (on a
     phone only the tile takes taps); the label itself on the retry, or if no
-    other label shows how far apart the rows are."""
+    other label shows how far apart the rows are. The rows' height from the labels
+    read and how many items apart they are in the MENU (a label not read, "Party",
+    doesn't make two rows look like one)."""
     x, y = hit
-    rows = [abs(ty - y) for t, tx, ty in texts if (tx, ty) != hit and any(norm(m) == norm(t) for m in MENU_ITEMS)]
-    rows = [r for r in rows if r > 0]
-    return hit if retry or not rows else (x, y - min(rows) / 2)
+    seen = {}
+    for t, tx, ty in texts:
+        i = next((i for i, m in enumerate(MENU_ITEMS) if norm(m) == norm(t)), None)
+        if i is not None:
+            seen.setdefault(i, ty)
+    rows = sorted(seen.items())
+    steps = sorted((y2 - y1) / (i2 - i1) for (i1, y1), (i2, y2) in zip(rows, rows[1:]) if y2 > y1)
+    return hit if retry or not steps else (x, y - steps[len(steps) // 2] / 2)
 
 
 def save_game(wait=0.0):

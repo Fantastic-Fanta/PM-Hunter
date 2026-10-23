@@ -956,12 +956,20 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
     /** Where to tap for a MENU item: its tile, half a row above its label
      *  (on a phone only the tile takes taps); the label itself on the retry,
      *  or if no other label shows how far apart the rows are. */
+    /** The rows' height from the labels read and how many items apart they are in the
+     *  MENU (a label not read, "Party", doesn't make two rows look like one). As
+     *  menu_button in pokehunt.py. */
     private fun menuButton(hit: TextHit, texts: List<TextHit>, retry: Boolean): Pt {
         if (retry) return Pt(hit.x, hit.y)
-        val rows = texts.filter { t -> t !== hit && MENU_ITEMS.any { Rules.norm(it) == Rules.norm(t.text) } }
-            .map { abs(it.y - hit.y) }.filter { it > 0 }
-        val row = rows.minOrNull() ?: return Pt(hit.x, hit.y)
-        return Pt(hit.x, hit.y - row / 2)
+        val seen = sortedMapOf<Int, Double>()
+        for (t in texts) {
+            val i = MENU_ITEMS.indexOfFirst { Rules.norm(it) == Rules.norm(t.text) }
+            if (i >= 0 && i !in seen) seen[i] = t.y
+        }
+        val rows = seen.entries.toList()
+        val steps = rows.zipWithNext { a, b -> (b.value - a.value) / (b.key - a.key) }.filter { it > 0 }.sorted()
+        if (steps.isEmpty()) return Pt(hit.x, hit.y)
+        return Pt(hit.x, hit.y - steps[steps.size / 2] / 2)
     }
 
     private fun saveGame(): Boolean {
