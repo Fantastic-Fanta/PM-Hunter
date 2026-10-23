@@ -14,7 +14,7 @@ SITE=/srv/poopihunt.xyz/public   # Hunt's own folder; nothing else is touched
 FILE=HuntSetup.exe
 
 git fetch -q origin main
-if [[ -n $(git status --porcelain -- '*.py' requirements.txt config.example.json samples windows .github) ||
+if [[ -n $(git status --porcelain -- '*.py' requirements.txt config.example.json samples windows window .github) ||
       $(git rev-parse HEAD) != $(git rev-parse origin/main) ]]; then
   echo "GitHub builds what's pushed to main: commit and push the Windows changes first"
   exit 1
@@ -38,7 +38,7 @@ if ! gh run watch $id --exit-status --interval 20 > /dev/null; then
   exit 1
 fi
 # what Windows read of the samples, and the sizes
-gh run view $id --log | sed -E 's/^.*[0-9]Z //' | grep -E "read like on the Mac|^[0-9.]+ MB installed" || true
+gh run view $id --log | sed -E 's/^.*[0-9]Z //' | grep -E "read like on the Mac|^[0-9.]+ MB (installed|Hunt.exe)|^ok: the pill" || true
 
 out=$(mktemp -d)
 gh run download $id -n HuntSetup -D $out

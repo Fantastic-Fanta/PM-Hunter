@@ -41,6 +41,7 @@ import os
 import queue
 import re
 import sys
+import signal
 import threading
 import time
 import urllib.request
@@ -793,7 +794,11 @@ def window_buttons():
                 website_key(devices.N_KEYCODE if cmd == "code" else devices.L_KEYCODE)
         import _thread
         _thread.interrupt_main()
+        time.sleep(8)  # still here (a battle that won't let go): no hunter goes on without its window
+        os._exit(0)
 
+    # Ctrl-C is how its input ending stops it: a handler even when the parent ignored Ctrl-C
+    signal.signal(signal.SIGINT, signal.default_int_handler)
     threading.Thread(target=read, daemon=True).start()
 
 

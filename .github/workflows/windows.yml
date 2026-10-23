@@ -1,5 +1,6 @@
-# Builds Hunt for Windows (it has to be built on Windows): Hunt.exe with
-# PyInstaller (windows/hunt.spec), packed into HuntSetup.exe with Inno Setup
+# Builds Hunt for Windows (it has to be built on Windows): the hunter,
+# hunt-engine.exe, with PyInstaller (windows/hunt.spec), and the window,
+# Hunt.exe, with Rust (window/), packed into HuntSetup.exe with Inno Setup
 # (windows/hunt.iss). publish-windows.sh starts it with a build number and
 # puts the result on poopihunt.xyz; a push builds it too, as a check, without
 # the debug channel.
@@ -16,7 +17,7 @@ on:
         default: "test"
   push:
     branches: [main]
-    paths: ["*.py", "requirements.txt", "config.example.json", "samples/**", "windows/**",
+    paths: ["*.py", "requirements.txt", "config.example.json", "samples/**", "windows/**", "window/**",
             ".github/workflows/windows.yml"]
 
 permissions:
@@ -54,8 +55,22 @@ jobs:
           print("build", os.environ["VERSION"], os.environ["NAME"],
                 "with" if os.environ["HOOK"] else "without", "the debug channel")
 
-      - name: Hunt.exe
+      - name: hunt-engine.exe
         run: pyinstaller --noconfirm --clean windows/hunt.spec
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: window
+
+      - name: Hunt.exe
+        env:
+          HUNT_VERSION: ${{ inputs.version || '0' }}
+          HUNT_NAME: ${{ inputs.name || 'test' }}
+        run: |
+          cargo build --release --locked --manifest-path window/Cargo.toml
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Copy-Item window\target\release\Hunt.exe dist\Hunt\Hunt.exe
+          "{0:N1} MB Hunt.exe" -f ((Get-Item dist\Hunt\Hunt.exe).Length / 1MB)
 
       - name: Read the samples with Windows' OCR
         continue-on-error: true
@@ -66,24 +81,26 @@ jobs:
 
       - name: Hunt.exe's window comes up
         env:
-          HUNT_DATA: ${{ runner.temp }}\hunt
+          HUNT_DATA: ${{ runner.temp }}\pill
         run: |
-          $p = Start-Process dist\Hunt\Hunt.exe -ArgumentList --smoke -PassThru -Wait
+          New-Item -ItemType Directory -Force $env:HUNT_DATA | Out-Null
+          $p = Start-Process dist\Hunt\Hunt.exe -ArgumentList --smoke -PassThru
+          Start-Sleep -Seconds 3  # the panel is open by then: a picture of the screen
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          $bmp.Save("$env:HUNT_DATA\screen.png")
+          if (-not $p.WaitForExit(20000)) { $p.Kill(); "Hunt.exe didn't finish"; exit 1 }
           Get-Content "$env:HUNT_DATA\smoke.txt"
           exit $p.ExitCode
 
-      - name: A picture of the pill on Windows
-        continue-on-error: true
-        env:
-          HUNT_DATA: ${{ runner.temp }}\pill
-          HUNT_PICTURE: "1"
-        run: python app.py --smoke
-
       - uses: actions/upload-artifact@v7
+        if: always()
         continue-on-error: true
         with:
           name: pill
-          path: ${{ runner.temp }}/pill/pill.png
+          path: ${{ runner.temp }}/pill/screen.png
           retention-days: 3
 
       - name: HuntSetup.exe
