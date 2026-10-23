@@ -32,12 +32,20 @@ fi
 
 scp -q -i $KEY server/hunt_server.py $SERVER:$BASE/api/hunt_server.py
 ssh_ "install -d -o poopihunt -g poopihunt -m 755 $BASE/public/app/fonts"
-scp -q -i $KEY site/app/index.html site/app/manifest.json $SERVER:$BASE/public/app/
+scp -q -i $KEY site/app/index.html site/app/manifest.json site/app/icon-*.png $SERVER:$BASE/public/app/
 scp -q -i $KEY site/app/fonts/*.woff2 $SERVER:$BASE/public/app/fonts/
 ssh_ "set -e
-  chown poopihunt:poopihunt $BASE/api/hunt_server.py $BASE/public/app/index.html $BASE/public/app/manifest.json $BASE/public/app/fonts/*
-  chmod 644 $BASE/api/hunt_server.py $BASE/public/app/index.html $BASE/public/app/manifest.json $BASE/public/app/fonts/*
+  chown poopihunt:poopihunt $BASE/api/hunt_server.py $BASE/public/app/index.html $BASE/public/app/manifest.json $BASE/public/app/icon-*.png $BASE/public/app/fonts/*
+  chmod 644 $BASE/api/hunt_server.py $BASE/public/app/index.html $BASE/public/app/manifest.json $BASE/public/app/icon-*.png $BASE/public/app/fonts/*
   systemctl restart poopihunt-api
   sleep 1
   systemctl is-active poopihunt-api"
+# the download page, filled in with the build that's up (publish-android.sh does the same)
+v=$(ssh_ "cat $BASE/public/version.json")
+name=$(echo "$v" | python3 -c "import json, sys; print(json.load(sys.stdin)['versionName'])")
+apk=$(echo "$v" | python3 -c "import json, sys; print(json.load(sys.stdin)['apk'])")
+page=$(mktemp)
+sed "s/BUILD/$name/; s/APKFILE/$apk/" site/index.html > $page
+scp -q -i $KEY $page $SERVER:$BASE/public/index.html
+ssh_ "chown poopihunt:poopihunt $BASE/public/index.html && chmod 644 $BASE/public/index.html"
 echo "published on https://poopihunt.xyz/app"

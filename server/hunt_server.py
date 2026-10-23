@@ -20,6 +20,7 @@ devices, codes (hashed) and sessions (hashed).
 import argparse
 import asyncio
 import base64
+import collections
 import hashlib
 import json
 import re
@@ -46,6 +47,7 @@ SPRITES = {  # the battle page's pictures: the Gen 5 sprites the game itself dra
     "back": (SHOWDOWN + "sprites/gen5-back/{}.png",),
     "item": (ITEMS + "{}.png",),  # bag icons: timer-ball, full-restore
 }
+HISTORY = 50             # encounters kept per device (memory only), for the page's ENCOUNTERS
 MAX_SPRITE = 40_000      # bytes: the 96 x 96 sprite area a device samples from the game
 
 
@@ -80,6 +82,7 @@ class Live:
         self.shot = None
         self.shot_n = 0
         self.sprite = None       # the wild Pokemon as the game draws it: count, species, PNG
+        self.history = collections.deque(maxlen=HISTORY)  # its last encounters, newest last
         self.commands = []
         self.wake = asyncio.Event()
         self.polled = 0.0
@@ -305,6 +308,12 @@ async def device_state(request):
     d.state = data
     d.state_at = time.time()
     d.polled = time.time()
+    # each new encounter, for the page's list of them
+    enc, count = data.get("enc"), data.get("count")
+    if data.get("phase") == "battle" and isinstance(enc, dict) and enc.get("species") and \
+            (not d.history or d.history[-1]["count"] != count):
+        d.history.append({"count": count, "at": round(time.time()), "wanted": bool(data.get("wanted")),
+                          **{k: enc.get(k) for k in ("species", "level", "shiny", "tint", "reskin", "gradient")}})
     hub.push(device)
     return web.json_response({})
 
@@ -436,8 +445,23 @@ async def forget(request):
 
 async def me(request):
     hub = request.app["hub"]
-    _, devices = hub.session_devices(request)
-    return web.json_response({"devices": [hub.view(d) for d in devices]})
+    h, devices = hub.session_devices(request)
+    resp = web.json_response({"devices": [hub.view(d) for d in devices]})
+    # a login in use doesn't run out: back to the full 30 days, once a day at most
+    expires = hub.db.execute("SELECT expires FROM sessions WHERE token_hash = ?", (h,)).fetchone()[0]
+    if expires - time.time() < (SESSION_DAYS - 1) * 86400:
+        hub.db.execute("UPDATE sessions SET expires = ? WHERE token_hash = ?", (time.time() + SESSION_DAYS * 86400, h))
+        hub.db.commit()
+        resp.set_cookie(COOKIE, request.cookies[COOKIE], max_age=SESSION_DAYS * 86400, path="/api",
+                        secure=request.app["secure"], httponly=True, samesite="Strict")
+    return resp
+
+
+async def history(request):
+    """A device's last encounters, newest first."""
+    hub = request.app["hub"]
+    device = hub.owned(request, request.match_info["device"])
+    return web.json_response({"encounters": list(reversed(hub.dev(device).history))})
 
 
 async def live(request):
@@ -556,6 +580,7 @@ def make_app(db_path, secure=True):
         web.get("/api/live", live),
         web.get("/api/devices/{device}/shot", shot),
         web.get("/api/devices/{device}/sprite", game_sprite),
+        web.get("/api/devices/{device}/history", history),
         web.post("/api/devices/{device}/command", send_command),
         web.post("/api/devices/{device}/forget", forget),
         web.get("/api/sprite/{kind}/{name}", sprite),

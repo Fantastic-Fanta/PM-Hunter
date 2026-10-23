@@ -108,6 +108,22 @@ async def main():
     view = (await (await me.get("/api/me")).json())["devices"][0]
     assert view["sprite"] == {"count": 3, "species": "Dewpider"}, view
 
+    # each new encounter is kept for the page's list, to its owner only
+    for n, species in ((4, "Sentret"), (4, "Sentret"), (5, "Marill")):
+        await mine.post("/api/device/state", json={"hunting": True, "phase": "battle", "count": n,
+                                                    "enc": {"species": species, "level": "3", "shiny": n == 5}})
+    hist = (await (await me.get(f"/api/devices/{device_id}/history")).json())["encounters"]
+    assert [(e["count"], e["species"], e["shiny"]) for e in hist] == [(5, "Marill", True), (4, "Sentret", False)], hist
+    assert (await them.get(f"/api/devices/{device_id}/history")).status == 404
+
+    # a login in use is renewed: the session runs a full 30 days again from now
+    token_hash = me.session.cookie_jar.filter_cookies(server.make_url("/api/me"))["hunt_session"].value
+    h = hunt_server.sha(token_hash)
+    app["hub"].db.execute("UPDATE sessions SET expires = ? WHERE token_hash = ?", (hunt_server.time.time() + 86400, h))
+    assert (await me.get("/api/me")).status == 200
+    left = app["hub"].db.execute("SELECT expires FROM sessions WHERE token_hash = ?", (h,)).fetchone()[0] - hunt_server.time.time()
+    assert left > (hunt_server.SESSION_DAYS - 1) * 86400, left
+
     # wrong codes are limited
     hits = [(await anon.post("/api/login", json={"code": "AAAAAA"}, headers={"X-Real-IP": "10.0.0.9"})).status
             for _ in range(12)]

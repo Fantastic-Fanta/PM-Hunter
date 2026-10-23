@@ -8,9 +8,11 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Hunt">
+<meta name="apple-mobile-web-app-title" content="POOPIHUNT">
 <link rel="manifest" href="manifest.json">
-<title>Hunt</title>
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>POOPIHUNT</title>
 <style>
   /* A Pokemon Emerald battle, drawn at the GBA's own 240 x 160 pixels and zoomed to fit
      (everything below is in GBA pixels). Colors are the game's. */
@@ -141,6 +143,9 @@
   .page .row > span:not(.cur) { position: absolute; left: 8px; right: 0; top: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .page .row small { float: right; color: #888898; font-family: "Gen3 Small", monospace; }
   .page .shot { display: block; margin: 0 auto; width: 136px; height: auto; image-rendering: auto; border: 1px solid #484858; }
+  .page .enc { display: flex; justify-content: space-between; align-items: center; gap: 6px; height: 12px;
+               font: 16px/12px "Gen3 Small", monospace; white-space: nowrap; }
+  .page .enc .tags { display: flex; align-items: center; gap: 3px; }
   .page .log { font: 16px/11px "Gen3 Small", monospace; white-space: pre-wrap; word-break: break-word; color: #484858;
                text-shadow: none; -webkit-user-select: text; user-select: text; }
 
@@ -274,7 +279,7 @@
     <!-- logging in -->
     <div class="layer" id="login" hidden>
       <div class="bg"></div>
-      <div class="win codewin"><h3>HUNT</h3><div class="slots" id="slots"></div>
+      <div class="win codewin"><h3>POOPIHUNT</h3><div class="slots" id="slots"></div>
         <input id="code" maxlength="7" autocomplete="off" autocapitalize="characters" spellcheck="false" inputmode="text"
                aria-label="Code">
         <button class="opt okbtn on" id="go"><span class="cur"></span><span>LOG IN</span></button></div>
@@ -415,9 +420,10 @@ function show(which) {
 
 function startLogin(msg) {
   show("login");
+  document.title = "POOPIHUNT";
   $("code").value = "";
   drawSlots();
-  say($("login-text"), msg || "Type the code HUNT shows.\nIt works once.");
+  say($("login-text"), msg || "Type the code POOPIHUNT\nshows. It works once.");
   setTimeout(() => $("code").focus(), 50);
 }
 
@@ -471,12 +477,16 @@ async function load() {
     throw e;
   }
   if (!devices.length) { startLogin(); return; }
-  if (!devices.some(d => d.id === current)) current = devices[0].id;
+  if (!devices.some(d => d.id === current)) current = (devices.find(d => d.online) || devices[0]).id;  // one that's up
   show("battle");
   render();
   listen();
 }
 
+// the START menu's pages, shown in the big window
+const PAGES = ["devices", "encounters", "screen", "log"];
+
+let connLost = false;  // the live updates' connection dropped (EventSource reconnects by itself)
 function listen() {
   if (events) events.close();
   events = new EventSource("/api/live");
@@ -484,9 +494,12 @@ function listen() {
     const v = JSON.parse(m.data);
     const i = devices.findIndex(d => d.id === v.id);
     if (i >= 0) devices[i] = v; else devices.push(v);
+    connLost = false;
     if (v.id === current || panel === "devices") render();
   };
+  events.onopen = () => { if (connLost) { connLost = false; render(); } };
   events.onerror = () => {  // logged out elsewhere, or the server restarted: EventSource retries itself
+    if (!connLost) { connLost = true; render(); }
     api("/me").catch(e => { if (e.status === 401) { events.close(); startLogin(); } });
   };
 }
@@ -644,7 +657,7 @@ function actingText(acting, lead, moves) {
   if ((m = acting.match(/^Using an? (.+)/))) return `You used a\n${UP(m[1])}!`;
   if ((m = acting.match(/^Using (.+)/))) return `${UP(lead.name || "Your POKéMON")} used\n${UP(m[1])}!`;
   if (/^Running/.test(acting)) return "";
-  if (/^Reading your moves/.test(acting)) return "HUNT is reading\nyour moves…";
+  if (/^Reading your moves/.test(acting)) return "POOPIHUNT is reading\nyour moves…";
   return acting + "…";
 }
 
@@ -674,7 +687,7 @@ function render() {
         enc.gradient && `It has the ${UP(enc.gradient)}\ngradient!`,
         enc.reskin && `It's the ${UP(enc.reskin)}\nreskin!`,
         enc.tint && "It's tinted!",
-        s.wanted && "HUNT wanted this one!",
+        s.wanted && "POOPIHUNT wanted this one!",
         lead.name && `Go! ${LEAD}!`,
       ]);
       if (enc.shiny) setTimeout(sparkle, 1500);
@@ -699,15 +712,16 @@ function render() {
   // the text box, and which window sits beside it
   const line = seqLine();
   let text, side = null;  // side: act, yesno
-  if (!d.online) text = s.hunting === false ? "HUNT isn't hunting on\nthis device right now." : "Device offline. HUNT\nconnects while hunting.";
-  else if (!s.hunting) text = "HUNT isn't hunting on\nthis device right now.";
+  if (connLost) text = "Lost the connection.\nReconnecting…";
+  else if (!d.online) text = s.hunting === false ? "POOPIHUNT isn't hunting\non this device." : "Offline. POOPIHUNT\nconnects while hunting.";
+  else if (!s.hunting) text = "POOPIHUNT isn't hunting\non this device.";
   else if (line) text = line;
   else if (s.error) text = s.error;
   else if (s.acting) text = actingText(s.acting, lead, s.moves || []);
   else if (pending) text = pending;
   else if (busy || controlSent) text = "…";
   else if (view === "ctl") {
-    text = s.remote ? "Let HUNT do the battles\nagain?" : "Take over from HUNT?\nIt will wait for you.";
+    text = s.remote ? "Let POOPIHUNT do the\nbattles again?" : "Take over from\nPOOPIHUNT?";
     side = "yesno";
   }
   else if (inBattle && s.remote && view === "run") { text = "Run from this\nbattle?"; side = "yesno"; }
@@ -716,12 +730,12 @@ function render() {
   else if (caught) text = `Gotcha!\n${UP(seen.species)} was caught!`;
   else {
     const after = {"got away": "Got away safely!", "the battle is over": "The battle is over."}[s.msg] || (s.msg ? s.msg : "");
-    text = after ? after + (s.remote ? "\nHUNT holds the next one." : "\nHUNT keeps searching…")
-                 : s.remote ? "Searching the grass…\nHUNT will wait for you." : "HUNT is searching\nthe tall grass…";
+    text = after ? after + (s.remote ? "\nPOOPIHUNT holds the next." : "\nPOOPIHUNT hunts on…")
+                 : s.remote ? "Searching the grass…\nPOOPIHUNT will wait." : "POOPIHUNT is searching\nthe tall grass…";
   }
   const menuOpen = panel && panel !== "bag";  // the START menu and its pages talk in the text box themselves
   // not your battle: TAKE OVER / RESUME and MENU sit beside the text
-  if (!side && !panel && view === "main" && !(s.remote && inBattle) && !s.acting && !pending && !busy) side = "cmd";
+  if (!side && !connLost && !panel && view === "main" && !(s.remote && inBattle) && !s.acting && !pending && !busy) side = "cmd";
   if (panel) side = null;
   const fighting = view === "fight" && can && !line && !panel;
   $("msgframe").classList.toggle("half", side === "act");
@@ -737,16 +751,40 @@ function render() {
   const bob = side === "act" || fighting;
   $("lead-hb").classList.toggle("bob", bob);
 
+  // the browser tab says what's going on
+  const star = s.wanted ? "★ " : "";
+  document.title = connLost ? "Reconnecting · POOPIHUNT" : !d.online ? "Offline · POOPIHUNT"
+    : inBattle && s.remote ? `${star}Wild ${SP}! · POOPIHUNT`
+    : keep ? `${star}${SP} · POOPIHUNT` : s.remote ? "Taken over · POOPIHUNT" : "Hunting · POOPIHUNT";
+
   if (panel === "bag") { if (live && s.remote && inBattle) drawBag(f); else closePanels(); }
   if (panel === "menu") drawStartMenu(f);
-  if (["devices", "screen", "log"].includes(panel)) drawPage(f);
+  if (PAGES.includes(panel)) drawPage(f);
 }
 
 // each gradient's own colors, roughly: a run of hues picked from its name
-function gradientColors(name) {
+function gradientHueOf(name) {
   let h = 0;
   for (const c of name) h = (h * 31 + c.charCodeAt(0)) % 360;
+  return h;
+}
+function gradientColors(name) {
+  const h = gradientHueOf(name);
   return `linear-gradient(90deg, hsl(${h} 85% 42%), hsl(${(h + 70) % 360} 85% 40%), hsl(${(h + 140) % 360} 85% 38%))`;
+}
+const gradientHue = name => `hsl(${gradientHueOf(name)} 85% 40%)`;
+
+// the device's last encounters (the server keeps them), fetched again after each new one
+const encHistory = {device: "", key: "", list: []};
+function loadHistory(d, s) {
+  const key = `${d.id}:${s.count}`;
+  if (encHistory.key === key) return;
+  encHistory.key = key;
+  api(`/devices/${encodeURIComponent(d.id)}/history`).then(r => {
+    if (encHistory.key !== key) return;
+    Object.assign(encHistory, {device: d.id, list: r.encounters || []});
+    render();
+  }).catch(() => {});
 }
 
 function drawFoe(d, s, enc, inBattle, caught) {
@@ -964,13 +1002,13 @@ function drawBag(f) {
 function menuItems() {
   const f = facts();
   const items = [];
-  if (f && f.live) items.push(f.s.remote ? ["control", "RESUME", "Let HUNT do the battles\nagain."]
-                                         : ["control", "TAKE OVER", "Battle yourself: HUNT waits\nfor you in each battle."]);
+  if (f && f.live) items.push(f.s.remote ? ["control", "RESUME", "Let POOPIHUNT do the\nbattles again."]
+                                         : ["control", "TAKE OVER", "Battle yourself: POOPIHUNT\nwaits for you in each battle."]);
   const d = f && f.d;
   items.push(["devices", "DEVICES", d ? `${UP(d.label || "Device").slice(0, 24)}\n${status(d, d.state || {})}` +
                                         (d.state && d.state.count != null ? ` · ${d.state.count} SEEN` : "") : "Your devices."]);
+  items.push(["encounters", "ENCOUNTERS", `${f && f.s.count != null ? f.s.count : 0} met this hunt: the\nlatest ones, newest first.`]);
   items.push(["screen", "SCREEN", "The latest picture from\nthe device's screen."]);
-  items.push(["log", "LOG", "What HUNT has been\ndoing lately."]);
   if (document.fullscreenEnabled)
     items.push(document.fullscreenElement ? ["full", "WINDOW", "Leave full screen."] : ["full", "FULL SCREEN", "Fill the whole screen."]);
   items.push(["logout", "LOG OUT", "Log this browser out\nof every device."]);
@@ -1022,11 +1060,25 @@ function drawPage(f) {
     const fresh = live && s.remote && s.phase === "battle";
     body = (fresh ? `<button class="row on" data-pick="shot:0"><span class="cur">${CURSOR}</span><span>NEW PICTURE</span></button>` : "") +
            (d.shot && shotUrl && shotFor.startsWith(d.id + ":") ? `<img class="shot" src="${shotUrl}" alt="The game, after the last turn">` : "");
-    note = !d.shot ? "No picture yet. HUNT sends\none each turn you play." : "The game after the\nlast turn.";
+    note = !d.shot ? "No picture yet. POOPIHUNT\nsends one each turn you play." : "The game after the\nlast turn.";
+  } else if (panel === "encounters") {
+    title = "ENCOUNTERS";
+    loadHistory(d, s);
+    const list = encHistory.device === d.id ? encHistory.list : [];
+    body = list.map(e => {
+      const sp = UP(String(e.species || "").replace(/\s+[A-Za-z♀♂]$/, ""));
+      const tags = (e.shiny ? SHINY_STAR : "") + (e.tint ? TINT_STAR : "") +
+        (e.reskin ? tiny(UP(e.reskin), "#6a3a9c") : "") +
+        (e.gradient ? tiny(UP(e.gradient), gradientHue(UP(e.gradient))) : "") + (e.wanted ? tiny("WANTED", "#c08000") : "");
+      return `<div class="enc"><span>No.${esc(e.count)} ${esc(sp)} \uE000${esc(e.level || "?")}</span><span class="tags">${tags}</span></div>`;
+    }).join("") || `<pre class="log">None yet.</pre>`;
+    // POOPIHUNT's own lines, for when something goes wrong
+    body += `<button class="row on" data-pick="showlog:0"><span class="cur">${CURSOR}</span><span>LOG</span></button>`;
+    note = `${s.count != null ? s.count : list.length} met this hunt.\nNewest first.`;
   } else if (panel === "log") {
     title = "LOG";
     body = `<pre class="log">${esc((s.log || []).join("\n") || "Nothing yet.")}</pre>`;
-    note = "What HUNT has been\ndoing lately.";
+    note = "What POOPIHUNT has been\ndoing lately.";
   }
   $("page-title").textContent = title;
   setHtml($("page-body"), body);
@@ -1037,7 +1089,7 @@ function openPanel(name) {
   panel = name;
   $("bag").hidden = name !== "bag";
   $("startmenu").hidden = name !== "menu";
-  $("page").hidden = !["devices", "screen", "log"].includes(name);
+  $("page").hidden = !PAGES.includes(name);
   if (name === "devices") cur.page = Math.max(0, devices.findIndex(v => v.id === current));
   if (name === "bag") cur.bag = 0;
   render();
@@ -1060,6 +1112,8 @@ function choose(kind, i) {
     else if (i === 2) { cur.menu = 0; openPanel("menu"); }
     else { view = "run"; cur.yes = 1; }
     render();
+  } else if (kind === "showlog") {
+    openPanel("log");
   } else if (kind === "shot") {
     send({cmd: "shot"});
   } else if (kind === "cmd") {
@@ -1086,7 +1140,7 @@ function choose(kind, i) {
   } else if (kind === "menu") {
     const m = (menuItems()[i] || [])[0];
     if (m === "control") { closePanels(); send({cmd: f.s.remote ? "resume" : "takeover"}); }
-    else if (["devices", "screen", "log"].includes(m)) openPanel(m);
+    else if (PAGES.includes(m)) openPanel(m);
     else if (m === "full") {
       (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {});
       closePanels();
@@ -1110,6 +1164,7 @@ function pressA() {
   if (panel === "menu") return choose("menu", cur.menu);
   if (panel === "bag") return choose("bag", cur.bag);
   if (panel === "devices") return choose("page", cur.page);
+  if (panel === "encounters") return choose("showlog", 0);
   if (panel === "screen") { const f = facts(); if (f && f.live && f.s.remote && f.s.phase === "battle") send({cmd: "shot"}); return; }
   if (panel) return;
   if (skipSeq()) return;
@@ -1128,7 +1183,8 @@ function askControl() {
 }
 function pressB() {
   if (!$("login").hidden) { if (devices.length) show("battle"), render(); return; }
-  if (["devices", "screen", "log"].includes(panel)) return openPanel("menu");
+  if (panel === "log") return openPanel("encounters");  // the log opens from ENCOUNTERS
+  if (PAGES.includes(panel)) return openPanel("menu");
   if (panel) return closePanels();
   if (view !== "main") { view = "main"; render(); }
 }

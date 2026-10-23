@@ -2,27 +2,79 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Hunt</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>POOPIHUNT</title>
+<link rel="icon" href="/app/icon-192.png">
+<link rel="apple-touch-icon" href="/app/icon-180.png">
 <style>
-  :root { color-scheme: dark; }
-  body { margin: 0; min-height: 100vh; display: grid; place-items: center;
-         background: #0b0b0b; color: #fff; font: 16px/1.5 system-ui, sans-serif; }
-  main { width: min(360px, calc(100% - 32px)); }
-  h1 { font-size: 28px; margin: 0 0 24px; }
-  a.get { display: block; padding: 18px; border-radius: 4px; background: #fff; color: #000;
-          text-align: center; font-weight: 700; font-size: 20px; text-decoration: none; }
-  a.web { display: block; margin-top: 10px; padding: 16px; border-radius: 4px; box-shadow: inset 0 0 0 2px #fff;
-          color: #fff; text-align: center; font-weight: 700; text-decoration: none; }
-  p { color: #9e9e9e; font-size: 13px; text-align: center; margin: 12px 0 0; }
+  /* the battle page's look (app/index.html): a Gen 3 screen of 240 x 160 pixels, zoomed to fit.
+     The publish scripts fill in the build and the APK's file name. */
+  @font-face { font-family: "Gen3"; src: url(/app/fonts/gen3.woff2) format("woff2"); font-display: block; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: #000; display: flex; align-items: center; justify-content: center; min-height: 100dvh;
+         overflow: hidden; -webkit-tap-highlight-color: transparent; }
+  #app { position: relative; width: 240px; height: 160px; overflow: hidden; font: 16px/16px "Gen3", monospace;
+         -webkit-font-smoothing: none; }
+  .bg { position: absolute; inset: 0 0 48px 0; background: repeating-linear-gradient(180deg, #deffd5 0 1px, #d5f6d5 1px 4px); }
+  .bg::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 16px;
+                background: linear-gradient(180deg, #deffd5 0 1px, #b4e694 1px 4px, #deffd5 4px 5px, #bdeea4 5px 8px,
+                                            #deffd5 8px 9px, #c5eebd 9px 12px, #deffd5 12px 13px, #cdf6c5 13px 16px); }
+  .win { position: absolute; left: 24px; top: 16px; width: 192px; height: 84px; background: #fff; border-radius: 3px;
+         color: #484858; text-shadow: 1px 0 #d0d0c8, 0 1px #d0d0c8, 1px 1px #d0d0c8;
+         box-shadow: inset 0 0 0 1px #4a4152, inset 0 0 0 2px #293131, inset 0 0 0 3px #6a8bbd,
+                     inset 0 0 0 5px #6a5a73, inset 0 0 0 6px #ded5de; }
+  h1 { margin: 0; position: absolute; left: 0; right: 0; top: 9px; text-align: center; font: inherit; color: #e05040;
+       text-shadow: 1px 0 #f8c8a8, 0 1px #f8c8a8, 1px 1px #f8c8a8; }
+  a { position: absolute; left: 16px; height: 16px; color: inherit; text-decoration: none; white-space: nowrap; }
+  a i { position: absolute; left: -9px; top: 4px; width: 5px; height: 7px; visibility: hidden;
+        background: #484858; clip-path: polygon(0 0, 100% 50%, 0 100%); }
+  a.on i { visibility: visible; }
+  .msgbox { position: absolute; left: 0; top: 112px; width: 240px; height: 48px; background: #4a4152; }
+  .msgframe { position: absolute; left: 1px; top: 3px; width: 238px; height: 42px; background: #6aa4a4;
+              border: solid #d54a39; border-width: 1px 6px; border-radius: 5px; box-shadow: inset 0 0 0 1px #838b8b; }
+  .msgtext { position: absolute; left: 9px; top: 6px; right: 9px; white-space: pre-line; color: #fff;
+             text-shadow: 1px 0 #6a5a73, 0 1px #6a5a73, 1px 1px #6a5a73; }
 </style>
 </head>
 <body>
-<main>
-  <h1>Hunt</h1>
-  <a class="get" href="APKFILE" download>Download for Android</a>
-  <a class="web" href="/app/">Watch and battle from here</a>
-  <p>build BUILD</p>
-</main>
+<div id="app">
+  <div class="bg"></div>
+  <div class="win">
+    <h1>POOPIHUNT</h1>
+    <a href="APKFILE" download class="on" style="top:38px" data-say="For your phone: Android 11
+or newer. Build BUILD."><i></i>DOWNLOAD FOR ANDROID</a>
+    <a href="/app/" style="top:56px" data-say="Watch and battle from
+this browser."><i></i>PLAY ON THE WEB</a>
+  </div>
+  <div class="msgbox"><div class="msgframe"><div class="msgtext" id="say"></div></div></div>
+</div>
+<script>
+"use strict";
+// zoomed to fit; the ▶ follows the mouse or the arrow keys, Enter / Z chooses
+const app = document.getElementById("app"), links = [...document.querySelectorAll("a")];
+function fit() {
+  const k = Math.min(innerWidth / 240, innerHeight / 160);
+  app.style.zoom = k >= 2 ? Math.floor(k * 4) / 4 : k;
+}
+addEventListener("resize", fit);
+fit();
+let cur = 0, typing = 0;
+function point(i) {
+  cur = i;
+  links.forEach((a, n) => a.classList.toggle("on", n === i));
+  const text = links[i].dataset.say, el = document.getElementById("say");
+  clearInterval(typing);
+  let n = 0;
+  typing = setInterval(() => { el.textContent = text.slice(0, ++n); if (n >= text.length) clearInterval(typing); }, 28);
+}
+links.forEach((a, i) => a.addEventListener("pointerenter", () => { if (cur !== i) point(i); }));
+addEventListener("keydown", e => {
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); point((cur + (e.key === "ArrowDown" ? 1 : -1) + links.length) % links.length); }
+  else if (e.key === "Enter" || e.key.toLowerCase() === "z") links[cur].click();
+});
+point(0);
+</script>
 </body>
 </html>
