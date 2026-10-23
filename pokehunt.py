@@ -105,7 +105,7 @@ TURN_TIMEOUT = 60        # s for one turn: a throw with its shakes, or a move
 AFK_SPOT = (150, 800)    # black margin left of the game, below the chat window
 CHAT_MARGIN = (80, 140, 270, 560)  # black margin where chat lines start (the
                                    # game's blue side tabs end left of it)
-CHAT_BUTTON = (185, 82)  # Roblox's chat bubble, top left
+CHAT_BUTTON = (185, 82)  # Roblox's chat bubble, top left, if find_chat_button can't see it
 IDLE_SPOT = (1550, 960)  # empty right end of the "What should ... do?" box
 
 
@@ -248,6 +248,26 @@ def chat_showing(rgb, lay):
     if len(pill):
         p = p[pill[-1] + 3:]
     return p.size > 0 and (p.max(axis=2) > 90).mean() > 0.003
+
+
+def find_chat_button(rgb):
+    """Roblox's chat button: the right end of the dark gray pill (menu, chat)
+    in the top-left corner, or None. Roblox draws it by its window, not by the
+    game, so it isn't where the layout would put it on every screen shape (on
+    Windows the click went right of it). As Vision.chatButton on Android."""
+    h, w = rgb.shape[:2]
+    p = rgb[:int(h * 0.15), :int(w * 0.3)]
+    mx, mn = p.max(axis=2), p.min(axis=2)
+    pills = []
+    for rows, cols, _ in blobs((mx - mn < 12) & (mx >= 15) & (mx <= 60)):
+        bh, bw = rows.stop - rows.start, cols.stop - cols.start
+        if (h * 0.03 < bh < h * 0.12 and 1.5 <= bw / bh <= 4.0 and
+                cols.start < w * 0.18 and cols.stop < w * 0.29):
+            pills.append((rows.start, rows, cols))
+    if not pills:
+        return None
+    _, rows, cols = min(pills, key=lambda b: b[0])  # the topmost: Roblox's own bar, not the chat window
+    return cols.stop - 0.6 * (rows.stop - rows.start), (rows.start + rows.stop) / 2
 
 
 def clean_name(text):
@@ -471,8 +491,8 @@ def draw_layout(img, lay):
         d.rectangle(lay.box(b), outline=(255, 0, 255), width=3)
     for y in (HP_BAR_END, BOX_END):
         d.line((*lay.pt(BOX[0], y), *lay.pt(BOX[2], y)), fill=(255, 0, 255), width=3)
-    for p in (RUN, BAG, FIGHT, IDLE_SPOT, AFK_SPOT, CHAT_BUTTON):
-        x, y = lay.pt(*p)
+    chat = find_chat_button(load_rgb(img)) or lay.pt(*CHAT_BUTTON)
+    for x, y in [lay.pt(*p) for p in (RUN, BAG, FIGHT, IDLE_SPOT, AFK_SPOT)] + [chat]:
         d.ellipse((x - 10, y - 10, x + 10, y + 10), outline=(0, 255, 0), width=3)
     return out
 
@@ -1058,7 +1078,7 @@ def read_encounter(hint, clicks=False, draw=False):
         # flip it open and shut for good if something else looks like chat.
         if chat and clicks and time.time() - chat_click > 5 and chat_clicks < 2:
             say("  closing the chat, it covers the enemy's box")
-            click_at(*lay.pt(*CHAT_BUTTON))
+            click_at(*(find_chat_button(rgb) or lay.pt(*CHAT_BUTTON)))
             move_mouse(*lay.pt(*IDLE_SPOT))
             chat_click, chat_clicks = time.time(), chat_clicks + 1
         readable = menu and not chat and box_visible(rgb, lay)
