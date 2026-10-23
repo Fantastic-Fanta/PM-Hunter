@@ -71,7 +71,7 @@ try:
     from build_info import NAME as BUILD  # Hunt.exe's build, written by the Windows build
 except ImportError:
     BUILD = time.strftime("%d %b %H:%M", time.localtime(os.path.getmtime(__file__)))
-WINDOW = False  # run by Hunt's window (app.py), --window
+WINDOW = False  # run by Hunt's window (Hunt.exe, window/), --window
 dev = devices.Desktop()
 FIELDS = ("species", "shiny", "tint", "reskin", "gradient")
 
