@@ -31,7 +31,8 @@ The window (`app.py`, Hunt.exe) is a pill with no frame, dragged anywhere:
 start / stop (play again after a find or Ctrl+Shift+H carries on), the website
 code (click it for the website), a box for the Discord webhook (saved in
 config.json; a hunt that's on starts again with it; right click pastes), and
-**•••**, which slides out a panel (up when the pill is low on the screen):
+**•••**, which grows the pill down into a panel (in about half a second; lifted
+only if the bottom of the screen is in the way):
 **Debug mode** (every encounter caught, screenshots to the debug channel),
 **Catch test** (the next encounter caught and the game saved, then it turns
 itself off), **Preferred ball** (after the first-turn Quick Ball; Repeat Ball

@@ -51,7 +51,8 @@ INK, PAPER, GREY, LINE, SOFT = "#111111", "#ffffff", "#8a8a8a", "#e4e4e4", "#f4f
 FONT = "Segoe UI" if WINDOWS else "Helvetica Neue"
 WEBHOOK = r"https://((ptb|canary)\.)?discord(app)?\.com/api/webhooks/\d+/\S+$"
 MONO = "Consolas" if WINDOWS else "Menlo"
-GAP, PANEL, ROW = 8, 236, 44  # the panel ••• slides out: its distance from the pill, its height, a row's
+PANEL, ROW = 230, 44  # what ••• adds under the pill: the panel's height, a row's
+SLIDE = 0.45  # s, for the pill to grow into the panel or back
 KEY = "#ff00fe"  # on Windows the window is see-through where it's this color: all but the pill
 
 
@@ -122,13 +123,13 @@ class Hunt:
             self.icon = None
 
         # a pill with no frame: the window's own color is see-through around it.
-        # ••• slides a panel out of it (up, when it sits low on the screen): the
-        # canvas holds both, and the window shows as much of it as is open.
+        # ••• grows it down into a panel: the canvas holds both, and the window
+        # shows as much of it as is open.
         root.overrideredirect(True)
         u = self.u = max(1.0, root.winfo_fpixels("1i") / 96)  # Windows' display scaling
         self.W, self.H = round(360 * u), round(52 * u)
-        self.full = self.H + round(GAP * u) + round(PANEL * u)
-        self.open, self.extra, self.up = False, 0.0, True
+        self.full = self.H + round(PANEL * u)
+        self.open, self.extra, self.found_now = False, 0.0, False
         if WINDOWS:
             clear = KEY
             root.attributes("-transparentcolor", KEY)
@@ -162,7 +163,7 @@ class Hunt:
         sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
         x, y = self.settings.get("pos") or (0, -1)
         if not (0 <= x <= sw - self.W // 2 and 0 <= y <= sh - self.H):
-            x, y = (sw - self.W) // 2, sh - self.H - round(90 * u)  # bottom middle, above the taskbar
+            x, y = (sw - self.W) // 2, round(60 * u)  # top middle: room under it for the panel
         self.pos = [x, y]
         self.place()
 
@@ -197,29 +198,52 @@ class Hunt:
         self.root.after(10, self.root.deiconify)
 
     def place(self):
-        """The window over the pill, and as much of the panel as is out."""
+        """The window over the pill and as much of the panel as is out, and the
+        pill's outline around both. Lifted only if the panel would leave the screen."""
         x, y = self.pos
         h = round(self.H + self.extra)
-        self.root.geometry(f"{self.W}x{h}+{round(x)}+{round(y - self.extra if self.up else y)}")
-        self.canvas.place(x=0, y=h - self.full if self.up else 0)
+        over = max(0, y + h - (self.root.winfo_screenheight() - round(48 * self.u)))
+        self.root.geometry(f"{self.W}x{h}+{round(x)}+{round(y - over)}")
+        self.canvas.place(x=0, y=0)
+        self.outline(h)
+
+    def outline(self, h):
+        c, W = self.canvas, self.W
+        c.delete("shape")
+        fill, edge = (PAPER, "#cfcfcf") if self.found_now else (INK, "#3a3a3a")
+        self.rounded(0, 0, W, h, edge, ("shape", "drag"), self.H / 2)  # a hairline around it, for dark games
+        self.rounded(1, 1, W - 1, h - 1, fill, ("shape", "drag"), self.H / 2 - 1)
+        c.tag_lower("shape")
+
+    def rounded(self, x0, y0, x1, y1, color, tags=(), r=None):
+        c = self.canvas
+        r = min(r or (y1 - y0) / 2, (y1 - y0) / 2)
+        c.create_oval(x0, y0, x0 + 2 * r, y0 + 2 * r, fill=color, outline="", tags=tags)
+        c.create_oval(x1 - 2 * r, y0, x1, y0 + 2 * r, fill=color, outline="", tags=tags)
+        c.create_oval(x0, y1 - 2 * r, x0 + 2 * r, y1, fill=color, outline="", tags=tags)
+        c.create_oval(x1 - 2 * r, y1 - 2 * r, x1, y1, fill=color, outline="", tags=tags)
+        c.create_rectangle(x0 + r, y0, x1 - r, y1, fill=color, outline="", tags=tags)
+        c.create_rectangle(x0, y0 + r, x1, y1 - r, fill=color, outline="", tags=tags)
 
     def more(self):
-        """••• slides the panel out, or back in."""
+        """••• grows the pill down into the panel, or back."""
         self.open = not self.open
-        if self.open:
-            self.up = self.pos[1] + self.H / 2 > self.root.winfo_screenheight() / 2
-            self.drawn = None
-            self.draw()
-        else:
+        self.canvas.itemconfig("panel", state="hidden")  # shown once it's all out
+        if not self.open:
             self.canvas.focus_set()
         start, goal, t0 = self.extra, (self.full - self.H) if self.open else 0, time.time()
 
         def step():
-            t = min(1.0, (time.time() - t0) / 0.18)
-            self.extra = start + (goal - start) * (1 - (1 - t) ** 3)
+            t = min(1.0, (time.time() - t0) / SLIDE)
+            k = 4 * t ** 3 if t < 0.5 else 1 - (-2 * t + 2) ** 3 / 2  # eased in and out
+            self.extra = start + (goal - start) * k
             self.place()
+            if self.open and t >= 0.8:
+                self.canvas.itemconfig("panel", state="normal")  # its settings, as it comes to rest
             if t < 1:
-                self.root.after(10, step)
+                self.root.after(8, step)
+        self.drawn = None
+        self.draw()
         step()
 
     def drag_start(self, e):
@@ -268,7 +292,7 @@ class Hunt:
         self.draw()
 
     def draw(self):
-        drawn = (self.code_text, self.main_icon, self.found_now, self.up, self.debug, self.test,
+        drawn = (self.code_text, self.main_icon, self.found_now, self.open, self.debug, self.test,
                  bool(self.update), self.note)
         if drawn == getattr(self, "drawn", None):
             return  # the same again: left alone, so a click on it isn't lost
@@ -276,27 +300,18 @@ class Hunt:
         c, u, W, H = self.canvas, self.u, self.W, self.H
         c.delete("all")
         self.lit = {}  # what the mouse lights up: tag -> (item, color, lit color)
-
-        def pill(x0, y0, x1, y1, color, tags=(), r=None):
-            r = min(r or (y1 - y0) / 2, (y1 - y0) / 2)
-            c.create_oval(x0, y0, x0 + 2 * r, y0 + 2 * r, fill=color, outline="", tags=tags)
-            c.create_oval(x1 - 2 * r, y0, x1, y0 + 2 * r, fill=color, outline="", tags=tags)
-            c.create_oval(x0, y1 - 2 * r, x0 + 2 * r, y1, fill=color, outline="", tags=tags)
-            c.create_oval(x1 - 2 * r, y1 - 2 * r, x1, y1, fill=color, outline="", tags=tags)
-            c.create_rectangle(x0 + r, y0, x1 - r, y1, fill=color, outline="", tags=tags)
-            c.create_rectangle(x0, y0 + r, x1, y1 - r, fill=color, outline="", tags=tags)
+        pill = self.rounded
 
         def circle(cx, cy, r, color, tag):
             return c.create_oval(cx - r, cy - r, cx + r, cy + r, fill=color, outline="", tags=tag)
 
-        # ---- the pill
-        light = self.found_now  # a find turns the pill white
+        light = self.found_now  # a find turns it white
         fill, ink, dim, edge = (PAPER, INK, "#6a6a6a", "#cfcfcf") if light else (INK, PAPER, "#8a8a8a", "#3a3a3a")
         hover_bg, box = ("#e8e8e8", "#efefef") if light else ("#2e2e2e", "#222222")
-        top = self.full - H if self.up else 0
-        pill(0, top, W, top + H, edge, "drag")  # a hairline around it, for dark games
-        pill(1, top + 1, W - 1, top + H - 1, fill, "drag")
-        cy = top + H / 2
+        self.outline(round(H + self.extra))
+
+        # ---- the pill: start / stop, the website code, the webhook box, •••
+        cy = H / 2
         x = 25 * u
         self.lit["main"] = (circle(x, cy, 17 * u, ink, "main"), ink, dim)
         if self.main_icon == "play":
@@ -311,7 +326,8 @@ class Hunt:
         self.lit["code"] = (c.create_text(left, cy, text=code, anchor="w", font=self.font, fill=color, tags="code"),
                             color, ink if code == self.code else color)
         x = W - round(28 * u)
-        self.lit["more"] = (circle(x, cy, 15 * u, hover_bg if self.open else fill, "more"), fill, hover_bg)
+        self.lit["more"] = (circle(x, cy, 15 * u, hover_bg if self.open else fill, "more"),
+                            hover_bg if self.open else fill, hover_bg)
         for dx in (-6, 0, 6):
             circle(x + dx * u, cy, 1.8 * u, ink, "more")
         if self.update:
@@ -322,51 +338,55 @@ class Hunt:
                              selectbackground=dim, selectforeground=fill)
         c.create_window(x0 + 12 * u, cy, window=self.hook_box, anchor="w", width=x1 - x0 - 24 * u, height=22 * u)
 
-        # ---- the panel
-        fill, ink, dim, edge, box = INK, PAPER, "#8a8a8a", "#3a3a3a", "#222222"
-        y0 = 0 if self.up else H + round(GAP * u)
-        y1 = y0 + round(PANEL * u)
-        pill(0, y0, W, y1, edge, "drag", r=20 * u)
-        pill(1, y0 + 1, W - 1, y1 - 1, fill, "drag", r=19 * u)
+        # ---- the panel, under it inside the same outline
         pad = 22 * u
+        shown = "normal" if self.open and self.extra >= self.full - H - 0.5 else "hidden"
+        c.create_line(pad, H, W - pad, H, fill=edge, tags=("panel", "drag"))
 
         def row(i, label):
-            y = y0 + 16 * u + ROW * u * (i + 0.5)
-            c.create_text(pad, y, text=label, anchor="w", font=self.label_font, fill=ink, tags="drag")
+            y = H + 6 * u + ROW * u * (i + 0.5)
+            c.create_text(pad, y, text=label, anchor="w", font=self.label_font, fill=ink, tags=("panel", "drag"))
             return y
 
         def switch(y, on, tag):
             x1 = W - pad
             x0 = x1 - 40 * u
             track, knob = (ink, fill) if on else (edge, dim)
-            pill(x0, y - 11 * u, x1, y + 11 * u, track, tag)
-            circle(x1 - 11 * u if on else x0 + 11 * u, y, 8 * u, knob, tag)
-            self.lit[tag] = (c.create_rectangle(x0, y - 11 * u, x1, y + 11 * u, fill="", outline="", tags=tag), "", "")
+            pill(x0, y - 11 * u, x1, y + 11 * u, track, ("panel", tag))
+            circle(x1 - 11 * u if on else x0 + 11 * u, y, 8 * u, knob, ("panel", tag))
+            self.lit[tag] = (c.create_rectangle(x0, y - 11 * u, x1, y + 11 * u, fill="", outline="",
+                                                tags=("panel", tag)), "", "")
 
         switch(row(0, "Debug mode"), self.debug, "debug")
         switch(row(1, "Catch test"), self.test, "test")
         y = row(2, "Preferred ball")
         bx0, bx1 = W - pad - 150 * u, W - pad
-        pill(bx0, y - 14 * u, bx1, y + 14 * u, box, "ball")
+        pill(bx0, y - 14 * u, bx1, y + 14 * u, box, ("panel", "ball"))
         self.ball_box.config(bg=box, fg=ink, insertbackground=ink, selectbackground=dim, selectforeground=fill)
-        c.create_window(bx0 + 12 * u, y, window=self.ball_box, anchor="w", width=bx1 - bx0 - 24 * u, height=22 * u)
+        c.create_window(bx0 + 12 * u, y, window=self.ball_box, anchor="w", width=bx1 - bx0 - 24 * u, height=22 * u,
+                        tags="panel")
         y = row(3, "Update")
         if self.update:
             words = self.note or "Install"
             bx0 = W - pad - max(90 * u, self.label_font.measure(words) + 32 * u)
-            pill(bx0, y - 15 * u, W - pad, y + 15 * u, ink, "update")
-            c.create_text((bx0 + W - pad) / 2, y, text=words, font=self.label_font, fill=fill, tags="update")
+            pill(bx0, y - 15 * u, W - pad, y + 15 * u, ink, ("panel", "update"))
+            c.create_text((bx0 + W - pad) / 2, y, text=words, font=self.label_font, fill=fill,
+                          tags=("panel", "update"))
             self.lit["update"] = (c.create_rectangle(bx0, y - 15 * u, W - pad, y + 15 * u, fill="", outline="",
-                                                     tags="update"), "", "")
+                                                     tags=("panel", "update")), "", "")
         else:
-            c.create_text(W - pad, y, text="Up to date", anchor="e", font=self.label_font, fill=dim, tags="drag")
-        y = y1 - 22 * u
-        c.create_text(pad, y, text=f"Build {NAME}", anchor="w", font=self.small_font, fill=edge, tags="drag")
-        quit_ = c.create_text(W - pad, y, text="Quit", anchor="e", font=self.small_font, fill=dim, tags="quit")
+            c.create_text(W - pad, y, text="Up to date", anchor="e", font=self.label_font, fill=dim,
+                          tags=("panel", "drag"))
+        y = self.full - 24 * u
+        c.create_text(pad + 4 * u, y, text=f"Build {NAME}", anchor="w", font=self.small_font, fill=edge,
+                      tags=("panel", "drag"))
+        quit_ = c.create_text(W - pad - 4 * u, y, text="Quit", anchor="e", font=self.small_font, fill=dim,
+                              tags=("panel", "quit"))
         self.lit["quit"] = (quit_, dim, ink)
         x = c.bbox(quit_)[0] - 18 * u
         self.lit["folder"] = (c.create_text(x, y, text="Folder", anchor="e", font=self.small_font, fill=dim,
-                                            tags="folder"), dim, ink)
+                                            tags=("panel", "folder")), dim, ink)
+        c.itemconfig("panel", state=shown)
         self.hovering(self.hover)
 
     # ------------------------------------------------------------ the panel's settings
@@ -782,7 +802,7 @@ def smoke(hunt):
             root.update()
         hunt.offer_update({"version": VERSION + 1, "name": "smoke"})
 
-        def settle(seconds=0.3):  # the panel slides
+        def settle(seconds=SLIDE + 0.2):  # the pill grows into the panel
             end = time.time() + seconds
             while time.time() < end:
                 root.update()
