@@ -67,6 +67,7 @@ FINDS_DIR = os.path.join(DATA, "finds")
 LOG = os.path.join(DATA, "encounters.csv")
 CAL_FILE = os.path.join(DATA, "calibration.json")
 KEY_FILE = os.path.join(DATA, "website.key")  # this computer's secret for poopihunt.xyz
+FIRST_RUN = os.path.join(DATA, "debug-run.json")  # there once a debug run's gone right here
 try:
     from build_info import NAME as BUILD  # Hunt.exe's build, written by the Windows build
 except ImportError:
@@ -2259,6 +2260,11 @@ def hunt(cfg, args):
     save_due, last_save, last_check = False, 0.0, 0.0
     last_pp, pp_tries = 0.0, 0
     times = Timing() if os.environ.get("HUNT_TIMES") else None  # each run-from encounter's time, traced
+    # A new install (no debug run gone right, no encounter ever): the first hunt's first
+    # encounter is a debug run, as on play's right click, to see everything works here
+    if WINDOW and not os.path.exists(FIRST_RUN) and not os.path.exists(LOG):
+        debug_run[0] = fit_next[0] = True
+        print("  (first time here: the first encounter is a debug run, to check everything works)", flush=True)
     if args.paused:
         running.clear()
         print("pokehunt paused: Ctrl+Shift+H to start.")
@@ -2405,6 +2411,11 @@ def hunt(cfg, args):
             debug_run[0] = False
             if ok:
                 print("  (the debug run went right: hunting on)", flush=True)
+                try:
+                    with open(FIRST_RUN, "w") as f:
+                        json.dump({"ok": time.strftime("%Y-%m-%d %H:%M:%S")}, f)
+                except OSError:
+                    pass
             elif running.is_set():
                 print("  (the debug run had a step go wrong: paused, see above)", flush=True)
                 toggle()

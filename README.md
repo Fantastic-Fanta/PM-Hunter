@@ -38,7 +38,7 @@ right click is **Debug mode**: it hunts at once, and at the next encounter fits
 the layout, throws a Quick Ball (Yawn with the Yawn user), runs, uses the
 favorited heal and PP items from MENU > Bag, saves, each step to the debug
 channel; then it turns itself off and hunts on, or pauses if a step went
-wrong), the website code (there from the start: the hunter runs paused
+wrong; a new install's first hunt starts with one by itself), the website code (there from the start: the hunter runs paused
 from when Hunt opens; click it for the website), a box for the Discord
 webhook (saved in config.json; a hunt that's on starts again with it), Hunt's
 folder and quit. It opens with Clodsire (`windows/hunt-icon.png`) big in the
