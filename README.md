@@ -34,9 +34,9 @@ config.json; a hunt that's on starts again with it; right click pastes), and
 **•••**, which grows the pill down into a panel (in about half a second; lifted
 only if the bottom of the screen is in the way):
 **Debug mode** (the next encounter caught with a screenshot every turn, the
-game saved, then it turns itself off), **Preferred ball** (after the
-first-turn Quick Ball; Repeat Ball unless it says otherwise, a Park Ball
-replaces them all), and a row of **Update**, **Folder** and **Quit**. A find turns the pill white. The hunter itself
+game saved, then it turns itself off), **Preferred ball** (Optimal: a
+first-turn Quick Ball, Repeat Balls, Timer Balls once 9 turns have gone by;
+a ball's name, such as Park Ball or Master Ball, is the only ball thrown), and a row of **Update**, **Folder** and **Quit**. A find turns the pill white. The hunter itself
 is pokehunt.py (hunt-engine.exe), run by the window with `--window`; the
 panel's switch reaches it as lines (`test on`, `test off`). What a PC keeps
 (config.json, finds, calibration, the website key, window.json for the

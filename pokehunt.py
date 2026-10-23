@@ -582,6 +582,8 @@ CATCH_PLAN = {  # config.json "catch" overrides these
     "first_ball": "Quick Ball", "sleep_move": "Yawn", "guard_move": "Protect",
     "asleep_ball": "Repeat Ball", "awake_ball": "Repeat Ball", "new_ball": "Dive Ball",
     "max_balls": 8,
+    # x1 + 0.3 for each turn passed (x4 at most): past a Repeat Ball's x3.5 once 9 turns have gone by
+    "timer_ball": "Timer Ball", "timer_after": 9,
     "max_turns": 30, "legendary_max_balls": 30, "legendary_max_turns": 90,
     "heal_below": 0.4, "heal_item": "Full Restore",
     "pp_item": "Max Elixir", "on_fail": "hold",
@@ -1516,7 +1518,8 @@ def catch(enc, img, lay, plan, first_ball=True, debug=False):
 def catching(enc, img, lay, plan, first_ball=True, debug=False, progress=None):
     """Catches with the plan from config.json "catch": a first-turn ball,
     then Yawn, Protect while it gets drowsy, and the sleep ball once it's
-    asleep. Statused targets (Yawn can't work) get the other ball. Heals and
+    asleep; Timer Balls instead once timer_after turns have gone by.
+    Statused targets (Yawn can't work) get the other ball. Heals and
     restores PP along the way. Returns (result, details): "caught", "gave up",
     "no bag" (couldn't use the bag), "over" or "timeout". debug: a screenshot
     of every turn to the debug webhook."""
@@ -1533,6 +1536,7 @@ def catching(enc, img, lay, plan, first_ball=True, debug=False, progress=None):
     # A Repeat Ball only helps on species you've caught before (the little
     # Poke Ball icon); anything new gets new_ball instead.
     new = None if enc.get("owned", True) else plan.get("new_ball")
+    timer = plan.get("timer_ball")
     print(f"  catching {title(enc)} Lv{enc['level'] or '?'} with {lead or '?'}: up to {max_balls} balls, "
           f"{max_turns} turns" + (" (legendary)" if legendary else "") +
           ("" if enc.get("owned", True) else f", not caught before: {new or 'same balls'}"), flush=True)
@@ -1565,11 +1569,19 @@ def catching(enc, img, lay, plan, first_ball=True, debug=False, progress=None):
                 if used == "no pp":
                     need_pp(lead, move, plan)
                 ball = new or plan["awake_ball"]
+        if ball and timer and turns >= plan.get("timer_after", 9) and ball != "Park Ball":
+            ball, plain = timer, ball
+        else:
+            plain = None
         if ball:
             if len(balls) >= max_balls:
                 return "gave up", f"{len(balls)} balls"
             trace(f"throwing a {ball} (#{len(balls) + 1})")
             used = use_item(lay, "Pokeballs", ball, prefer=park)
+            if not used and plain:
+                trace(f"no {ball} to throw: {plain}s from now on")
+                timer, ball = None, plain
+                used = use_item(lay, "Pokeballs", ball, prefer=park)
             if not used:
                 return "no bag", f"{ball} failed"
             balls.append(used)

@@ -821,7 +821,8 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
 
     /** Catches with the plan from the config's "catch": a first-turn ball,
      *  then Yawn, Protect while it gets drowsy, and the sleep ball once it's
-     *  asleep. Statused targets (Yawn can't work) get the other ball. Heals and
+     *  asleep; Timer Balls instead once timer_after turns have gone by.
+     *  Statused targets (Yawn can't work) get the other ball. Heals and
      *  restores PP along the way. Returns (result, details): "caught", "gave
      *  up", "no bag" (couldn't use the bag), "over" or "timeout". */
     private fun catch(enc: Enc, f0: Frame, lay0: Layout): Pair<String, String> {
@@ -852,6 +853,7 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
         var cur = enc
         // the first ball is a Park Ball whenever one is favorited in the bag
         var park = if (cfg.flag("park_ball")) "Park Ball" else null
+        var timer = cfg.str("timer_ball")
         Log.print("  catching ${enc.title()} Lv${enc.level.ifEmpty { "?" }} with ${lead.ifEmpty { "?" }}: up to " +
                   "$maxBalls balls, $maxTurns turns" + if (legendary) " (legendary)" else "")
         while (true) {
@@ -881,10 +883,22 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
                     ball = cfg.str("awake_ball")
                 }
             }
+            var plain: String? = null
+            if (ball != null && timer.isNotEmpty() && turns >= cfg.num("timer_after") && ball != "Park Ball") {
+                plain = ball
+                ball = timer
+            }
             if (ball != null) {
                 if (balls.size >= maxBalls) return "gave up" to "${balls.size} balls"
                 trace("throwing a $ball (#${balls.size + 1})")
-                if (!useItem(lay, "Pokeballs", ball, prefer = park)) return "no bag" to "$ball failed"
+                var thrown = useItem(lay, "Pokeballs", ball, prefer = park)
+                if (!thrown && plain != null) {
+                    trace("no $ball to throw: ${plain}s from now on")
+                    timer = ""
+                    ball = plain
+                    thrown = useItem(lay, "Pokeballs", ball, prefer = park)
+                }
+                if (!thrown) return "no bag" to "$ball failed"
                 balls.add(usedItem)
                 park = null
                 progress(balls.size, turns, usedItem)

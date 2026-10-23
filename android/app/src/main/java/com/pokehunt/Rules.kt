@@ -197,6 +197,8 @@ class Config(json: String) {
             "park_ball" to true,  // a favorited Park Ball (it never misses) goes first, before first_ball
             "first_ball" to "Quick Ball", "sleep_move" to "Yawn", "guard_move" to "Protect",
             "asleep_ball" to "Repeat Ball", "awake_ball" to "Repeat Ball", "max_balls" to 8,
+            // x1 + 0.3 for each turn passed (x4 at most): past a Repeat Ball's x3.5 once 9 turns have gone by
+            "timer_ball" to "Timer Ball", "timer_after" to 9,
             "max_turns" to 30, "legendary_max_balls" to 30, "legendary_max_turns" to 90,
             "heal_below" to 0.4, "heal_item" to "Full Restore",
             "pp_item" to "Max Elixir", "on_fail" to "hold",

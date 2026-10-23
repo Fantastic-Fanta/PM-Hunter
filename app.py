@@ -410,22 +410,25 @@ class Hunt:
         self.proc = None
         self.start(mode)
 
+    BALLS = ("first_ball", "awake_ball", "asleep_ball", "new_ball", "timer_ball")
+
     def ball_saved(self):
         try:
             with open(CONFIG, encoding="utf-8") as f:
                 catch = json.load(f).get("catch", {})
-            return catch.get("first_ball") if catch.get("first_ball") == "Park Ball" else \
-                catch.get("awake_ball") or "Repeat Ball"
+            first = catch.get("first_ball")
+            return first if first and first == catch.get("awake_ball") else "Optimal"
         except (OSError, ValueError, AttributeError):
-            return "Repeat Ball"
+            return "Optimal"
 
     def ball_out(self, e=None):
-        """The preferred ball, saved in config.json's catch plan: a Quick Ball
-        first, then this one. A Park Ball is the only ball (it never misses)."""
+        """The preferred ball, saved in config.json's catch plan. Optimal:
+        a Quick Ball first, Repeat Balls (Dive Balls for new ones), Timer
+        Balls once 9 turns have gone by. A ball's name: only that ball."""
         words = self.ball_var.get().title().split()
-        if words and not words[-1].endswith("Ball"):
+        if words and words != ["Optimal"] and not words[-1].endswith("Ball"):
             words.append("Ball")
-        ball = " ".join(words) or "Repeat Ball"
+        ball = " ".join(words) or "Optimal"
         self.ball_var.set(ball)
         if ball == self.ball:
             return
@@ -436,12 +439,10 @@ class Hunt:
         except (OSError, ValueError, AttributeError):
             self.ball_var.set(self.ball)
             return
-        for k in ("first_ball", "awake_ball", "asleep_ball", "new_ball"):
-            catch.pop(k, None)  # the defaults: a Quick Ball, then Repeat Balls (Dive Balls for new ones)
-        if ball == "Park Ball":
-            catch.update(first_ball=ball, awake_ball=ball, asleep_ball=ball, new_ball=ball)
-        elif ball != "Repeat Ball":
-            catch.update(awake_ball=ball, asleep_ball=ball, new_ball=ball)
+        for k in self.BALLS + ("park_ball",):
+            catch.pop(k, None)  # the defaults: Optimal
+        if ball != "Optimal":
+            catch.update({k: ball for k in self.BALLS}, park_ball=ball == "Park Ball")  # no favorite in its place
         save_json(CONFIG, {**cfg, "catch": catch})
         self.ball = ball
         if self.proc is not None and self.mode in ("hunt", "debug"):
@@ -807,12 +808,12 @@ def smoke(hunt):
             flip()
             root.update()
         balls = []
-        for ball in ("park", "ultra ball", ""):
+        for ball in ("park", "ultra ball", "optimal", ""):
             hunt.ball_var.set(ball)
             hunt.ball_out()
             with open(CONFIG, encoding="utf-8") as f:
-                balls.append(json.load(f).get("catch", {}).get("awake_ball", "-"))
-        if balls != ["Park Ball", "Ultra Ball", "-"]:
+                balls.append(json.load(f).get("catch", {}).get("first_ball", "-"))
+        if balls != ["Park Ball", "Ultra Ball", "-", "-"]:
             errors.append(f"the preferred ball saved as {balls}")
         for line in ("11:38:34  #60   Marill Lv51  (reskin KYOBLOXER, gradient IMPULSIVE BEAST) catch",
                      "  catch: caught (1 ball(s), last Quick Ball, 1 turns)", "|| paused (Ctrl+Shift+H to resume)",
