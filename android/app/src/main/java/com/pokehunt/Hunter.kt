@@ -498,7 +498,7 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
     private fun useItemIn(lay: Layout, tab: String, wanted: String, target: String?, prefer: String?,
                           inBattle: Boolean): Boolean {
         var item = wanted
-        // prefer: looked for on the list first, then searched for; decided once ("done")
+        // prefer: used only if it's a favorite in sight on the list; decided once ("done")
         var looking = if (prefer != null && Rules.norm(prefer) != Rules.norm(item)) "look" else "done"
         if (inBattle) {
             ensureBattle(lay)
@@ -577,7 +577,8 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
                             (close == null || it.y > close.y + 20 * v) && (rows == null || it.y < rows - 20 * v)
                     }.minByOrNull { it.y }
                     if (looking != "done") {
-                        // favorites are at the top, but more than a screenful hides some: then it's searched for
+                        // favorites are at the top: prefer if it's one of those in sight, else item
+                        // (never searched for: a search empties the list of the favorites there)
                         val p = prefer!!
                         val fav = texts.filter { Rules.sameWord(p, it.text) && it.x < split }.minByOrNull { it.y }
                         val listed = rows != null
@@ -593,23 +594,7 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
                                 }
                                 continue
                             }
-                            // every favorite is in sight above a plain row, and none is prefer
-                            looking == "look" && listed && Vision.plainRowInSight(img, texts, split, lay) -> {
-                                looking = "done"
-                                continue
-                            }
-                            looking == "look" && listed && box != null -> {
-                                tap(box)
-                                nap(0.5)
-                                if (phone.typeText(p)) {
-                                    trace("bag: looking for a favorited $p")
-                                    looking = "searched"
-                                } else looking = "done"
-                                tabAt = now()
-                                continue
-                            }
-                            looking == "searched" && now() - tabAt > 2.0 -> looking = "done"  // none in the bag
-                            looking == "look" && now() - tabAt > 3.0 -> looking = "done"  // no list read: go on without it
+                            listed || now() - tabAt > 3.0 -> looking = "done"  // not in sight (or no list read): item
                             else -> continue  // the list isn't up yet
                         }
                     }

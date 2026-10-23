@@ -1433,7 +1433,8 @@ def use_item(lay, tab, item, target=None, prefer=None, in_battle=True):
     split = lay.pt(BAG_SPLIT, 0)[0]
     step, row_y, tab_at, searched = "tab", 0, 0.0, False
     picked_at, picks = 0.0, 0
-    # prefer: looked for on the list first, then searched for; decided once ("done")
+    # prefer: used only if it's a favorite in sight on the list (never searched for:
+    # a search empties the list of the favorites that are there); decided once ("done")
     looking = "look" if prefer and norm(prefer) != norm(item) else "done"
     v = lay.s * lay.fit[1]  # screen px per reference px, down
     texts, img = [], None
@@ -1460,36 +1461,18 @@ def use_item(lay, tab, item, target=None, prefer=None, in_battle=True):
                 continue
         if step == "item":
             if looking != "done":
-                # favorites are at the top, but more than a screenful hides some: then it's searched for
+                # favorites are at the top: prefer if it's one of those in sight, else item
                 rows = sorted(y for t, x, y in texts if same_word(prefer, t) and x < split)
                 listed = any(re.fullmatch(r"x[\d,.]+", t) for t, _, _ in texts)
                 if rows:
                     if favorited(load_rgb(img), texts, rows[0], lay):
                         print(f"  {prefer} is a favorite: throwing that instead of the {item}", flush=True)
                         item = prefer
-                    elif looking == "searched":
-                        tab_at = time.time()  # the item's search next: the box shows prefer
                     looking = "done"
-                elif looking == "look" and listed and plain_row_in_sight(load_rgb(img), texts, split, lay):
-                    looking = "done"  # every favorite is in sight above it, and none is prefer
-                    continue
-                elif looking == "look" and listed and time.time() - tab_at > 1.0:
-                    box = search_box(texts, split, v)
-                    if box:
-                        trace(f"bag: looking for a favorited {prefer}")
-                        type_in(box, prefer)
-                        looking, tab_at = "searched", time.time()
-                    else:
-                        looking = "done"
-                    continue
-                elif looking == "searched" and time.time() - tab_at > 2.0:
-                    looking, tab_at = "done", time.time()  # none in the bag
-                elif looking == "look" and time.time() - tab_at > 3.0:
-                    looking = "done"  # no list read: go on without it
+                elif listed or time.time() - tab_at > 3.0:
+                    looking = "done"  # not in sight (or no list read): item
                 else:
                     continue  # the list isn't up yet
-                if looking == "done" and item != prefer:
-                    continue  # the item from the next picture on
             # exact names: "Dive Ball" and "Dream Ball" are one misread apart
             rows = sorted((y, x) for t, x, y in texts if norm(t) == norm(item) and x < split)
             if rows:
