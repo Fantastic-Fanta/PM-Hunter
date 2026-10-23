@@ -15,15 +15,19 @@ be read.
 
 ## Mac
 
-Double-click `pokehunt.command`. Ctrl+Shift+H pauses and resumes.
+Double-click `Poopihunt.command` for Poopihunt's window (the pill, as on Windows; it
+builds it the first time, which needs Rust: `brew install rust`), or
+`pokehunt.command` for the hunter in Terminal alone. Ctrl+Shift+H pauses and
+resumes. On the Mac the pill shows in screenshots and there's no self-update
+(a `git pull` brings the new version; Poopihunt.command builds the window again).
 
 Every reskin with a gradient is caught, on every platform, without a rule
 for it: `"catch_reskin_gradient": false` in config.json turns that off.
 
 ## Windows
 
-**Hunt for Windows** is `HuntSetup.exe` on https://poopihunt.xyz: download,
-open it, and Hunt is in the Start menu and on the desktop (no admin, no
+**Poopihunt for Windows** is `PoopihuntSetup.exe` on https://poopihunt.xyz: download,
+open it, and Poopihunt is in the Start menu and on the desktop (no admin, no
 Python). Windows warns about it at first ("Windows protected your PC": **More
 info > Run anyway**) because the installer isn't signed.
 

@@ -1,4 +1,4 @@
-; HuntSetup.exe: installs dist\Hunt for this Windows user (no admin), with a
+; PoopihuntSetup.exe: installs dist\Hunt (Poopihunt; Hunt.exe inside) for this Windows user (no admin), with a
 ; Start menu entry and a desktop icon. Hunt's window runs it with /VERYSILENT
 ; to update itself; it then starts the new Hunt. What Hunt keeps (config,
 ; finds, the website key) is in %LOCALAPPDATA%\Hunt and stays.
@@ -10,9 +10,9 @@
 
 [Setup]
 AppId={{B67D989D-E853-40C9-AAC3-95E19B1D7B33}
-AppName=Hunt
+AppName=Poopihunt
 AppVersion={#Name}
-AppVerName=Hunt ({#Name})
+AppVerName=Poopihunt ({#Name})
 AppPublisher=POOPIHUNT
 AppPublisherURL=https://poopihunt.xyz
 DefaultDirName={localappdata}\Programs\Hunt
@@ -21,10 +21,10 @@ DisableDirPage=yes
 DisableProgramGroupPage=yes
 DisableReadyPage=yes
 OutputDir=..\dist
-OutputBaseFilename=HuntSetup
+OutputBaseFilename=PoopihuntSetup
 SetupIconFile=hunt.ico
 UninstallDisplayIcon={app}\Hunt.exe
-UninstallDisplayName=Hunt
+UninstallDisplayName=Poopihunt
 WizardStyle=modern
 Compression=lzma2/max
 SolidCompression=yes
@@ -34,19 +34,22 @@ CloseApplications=yes
 RestartApplications=no
 
 [Tasks]
-Name: desktopicon; Description: "Put Hunt on the desktop"
+Name: desktopicon; Description: "Put Poopihunt on the desktop"
 
 [InstallDelete]
 ; the last build's files, so nothing old is left next to the new ones
 Type: filesandordirs; Name: "{app}\_internal"
+; its shortcuts from when it was called Hunt
+Type: files; Name: "{autoprograms}\Hunt.lnk"
+Type: files; Name: "{autodesktop}\Hunt.lnk"
 
 [Files]
 Source: "..\dist\Hunt\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
 
 [Icons]
-Name: "{autoprograms}\Hunt"; Filename: "{app}\Hunt.exe"
-Name: "{autodesktop}\Hunt"; Filename: "{app}\Hunt.exe"; Tasks: desktopicon
+Name: "{autoprograms}\Poopihunt"; Filename: "{app}\Hunt.exe"
+Name: "{autodesktop}\Poopihunt"; Filename: "{app}\Hunt.exe"; Tasks: desktopicon
 
 [Run]
 ; ticked after a normal install, and always after an update (/VERYSILENT)
-Filename: "{app}\Hunt.exe"; Description: "Start Hunt"; Flags: nowait postinstall
+Filename: "{app}\Hunt.exe"; Description: "Start Poopihunt"; Flags: nowait postinstall

@@ -679,9 +679,9 @@ impl Hunt {
         let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
         thread::spawn(move || {
             let result = (|| -> Result<PathBuf, String> {
-                let file = info.get("file").and_then(Value::as_str).unwrap_or("HuntSetup.exe");
+                let file = info.get("file").and_then(Value::as_str).unwrap_or("PoopihuntSetup.exe");
                 let number = info.get("version").and_then(Value::as_u64).unwrap_or(0);
-                let path = env::temp_dir().join(format!("HuntSetup-{number}.exe"));
+                let path = env::temp_dir().join(format!("PoopihuntSetup-{number}.exe"));
                 let part = path.with_extension("part");
                 let resp = ureq::get(&format!("{}/{file}", site()))
                     .set("User-Agent", &format!("Hunt (windows, {NAME})"))
@@ -1407,7 +1407,7 @@ fn main() -> eframe::Result {
         return Ok(()); // (the Direct3D start is this same Hunt, already counted)
     }
     let mut viewport = egui::ViewportBuilder::default()
-        .with_title("Hunt")
+        .with_title("Poopihunt")
         .with_inner_size(WINDOW)
         .with_decorations(false)
         .with_transparent(true)
@@ -1428,7 +1428,7 @@ fn main() -> eframe::Result {
     let direct3d = env::var_os("HUNT_RENDERER").is_some_and(|r| r == "wgpu");
     let renderer = if direct3d { eframe::Renderer::Wgpu } else { eframe::Renderer::Glow };
     let options = eframe::NativeOptions { viewport, renderer, wgpu_options: direct3d_anywhere(), ..Default::default() };
-    let result = eframe::run_native("Hunt", options, Box::new(|cc| Ok(Box::new(Hunt::new(cc)))));
+    let result = eframe::run_native("Poopihunt", options, Box::new(|cc| Ok(Box::new(Hunt::new(cc)))));
     if let Err(e) = &result {
         note(&format!("Hunt's window didn't open ({}): {e}", if direct3d { "Direct3D" } else { "OpenGL" }));
         if !direct3d {

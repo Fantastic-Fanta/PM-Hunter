@@ -261,7 +261,7 @@ def chat_open(rgb):
     x, y = hit
     r = max(4, int(rgb.shape[0] * 0.011))
     bubble = rgb[max(int(y) - r, 0):int(y) + r, max(int(x) - r, 0):int(x) + r]
-    return bool(bubble.size) and (bubble.min(axis=2) > 200).mean() > 0.4
+    return bool(bubble.size) and bool((bubble.min(axis=2) > 200).mean() > 0.4)
 
 
 def find_chat_button(rgb):
@@ -1137,8 +1137,10 @@ def read_encounter(hint, clicks=False, draw=False):
         if clicks:
             keep_roblox_in_front()  # a popup may be covering the enemy's box
         menu = menu_ready(rgb, lay)
-        chat = chat_showing(rgb, lay)  # its lines over the game
         is_open = chat_open(rgb)
+        # its lines over the game; not with its button saying it's closed (the mouse
+        # pointer in the margin looks like a line)
+        chat = chat_showing(rgb, lay) and is_open is not False
         # Its button says whether chat's open (filled) or not (an outline): closed
         # till it says so. Without the button only guessed at from chat lines,
         # and two clicks at most then (it toggles: one more could open it again).
@@ -1148,6 +1150,8 @@ def read_encounter(hint, clicks=False, draw=False):
             click_at(*(find_chat_button(rgb) or lay.pt(*CHAT_BUTTON)))
             move_mouse(*lay.pt(*IDLE_SPOT))
             chat_click, chat_clicks = time.time(), chat_clicks + 1
+        if clicks and chat and time.time() - chat_click > 2.5:
+            move_mouse(*lay.pt(*IDLE_SPOT))  # (the pointer out of the margin, in case it's that)
         readable = menu and not chat and box_visible(rgb, lay)
         if timing[0]:
             trace(f"read: {'menu' if menu else 'no menu yet'}{', chat' if chat else ''}"

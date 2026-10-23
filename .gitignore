@@ -10,6 +10,8 @@ encounters.csv
 finds/
 debug/
 debug-hunt.log
+hunt.log
+window.json
 setup.log
 
 # built / installed

@@ -1,7 +1,7 @@
 #!/bin/zsh
 # Builds Hunt for Windows on GitHub (it has to be built on Windows:
 # .github/workflows/windows.yml) and publishes it on poopihunt.xyz:
-# HuntSetup.exe, windows.json and the download page. Hunt on a PC offers the
+# PoopihuntSetup.exe, windows.json and the download page. Hunt on a PC offers the
 # update when it next starts, or within 6 hours. A copy lands in ~/Downloads.
 # GitHub builds what's pushed, so commit and push first.
 #   ./publish-windows.sh              build and publish
@@ -11,7 +11,7 @@ cd "$(dirname "$0")"
 SERVER=root@153.92.4.40
 KEY=~/.ssh/clodsire_vps
 SITE=/srv/poopihunt.xyz/public   # Hunt's own folder; nothing else is touched
-FILE=HuntSetup.exe
+FILE=PoopihuntSetup.exe
 
 git fetch -q origin main
 if [[ -n $(git status --porcelain -- '*.py' requirements.txt config.example.json samples windows window .github) ||
@@ -41,7 +41,7 @@ fi
 gh run view $id --log | sed -E 's/^.*[0-9]Z //' | grep -E "read like on the Mac|^[0-9.]+ MB (installed|Hunt.exe)|^ok: the pill" || true
 
 out=$(mktemp -d)
-gh run download $id -n HuntSetup -D $out
+gh run download $id -n PoopihuntSetup -D $out
 cp $out/$FILE ~/Downloads/$FILE
 echo "built $name: ~/Downloads/$FILE ($(du -h $out/$FILE | cut -f1))"
 [[ $1 == --no-upload ]] && exit 0

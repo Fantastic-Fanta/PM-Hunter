@@ -16,7 +16,7 @@
     </queries>
 
     <application
-        android:label="Hunt"
+        android:label="Poopihunt"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
@@ -36,7 +36,7 @@
         <service
             android:name=".HuntService"
             android:exported="false"
-            android:label="Hunt"
+            android:label="Poopihunt"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
@@ -51,7 +51,7 @@
             android:name=".HuntTile"
             android:exported="true"
             android:icon="@drawable/ic_tile"
-            android:label="Hunt"
+            android:label="Poopihunt"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />

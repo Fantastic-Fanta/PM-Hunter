@@ -1,6 +1,6 @@
 # Builds Hunt for Windows (it has to be built on Windows): the hunter,
 # hunt-engine.exe, with PyInstaller (windows/hunt.spec), and the window,
-# Hunt.exe, with Rust (window/), packed into HuntSetup.exe with Inno Setup
+# Hunt.exe, with Rust (window/), packed into PoopihuntSetup.exe with Inno Setup
 # (windows/hunt.iss). publish-windows.sh starts it with a build number and
 # puts the result on poopihunt.xyz; a push builds it too, as a check, without
 # the debug channel.
@@ -110,7 +110,7 @@ jobs:
           path: ${{ runner.temp }}/pill/*.png
           retention-days: 3
 
-      - name: HuntSetup.exe
+      - name: PoopihuntSetup.exe
         env:
           NAME: ${{ inputs.name || 'test' }}
         run: |
@@ -119,11 +119,11 @@ jobs:
           & $iscc /Q "/DName=$env:NAME" windows\hunt.iss
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           "{0:N1} MB installed, {1:N1} MB setup" -f ((Get-ChildItem dist\Hunt -Recurse | Measure-Object Length -Sum).Sum / 1MB),
-            ((Get-Item dist\HuntSetup.exe).Length / 1MB)
+            ((Get-Item dist\PoopihuntSetup.exe).Length / 1MB)
 
       - uses: actions/upload-artifact@v7
         with:
-          name: HuntSetup
-          path: dist/HuntSetup.exe
+          name: PoopihuntSetup
+          path: dist/PoopihuntSetup.exe
           if-no-files-found: error
           retention-days: 14
