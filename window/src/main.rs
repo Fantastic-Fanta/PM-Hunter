@@ -1,6 +1,7 @@
-//! Hunt's window (Hunt.exe): a pill with no frame. Start / stop, the website
-//! code, a box for the Discord webhook, and ••• which grows the pill down into
-//! a panel: Debug mode, Preferred ball, and Update / Folder / Quit.
+//! Hunt's window (Hunt.exe): one pill with no frame. Start / stop, the website
+//! code, a box for the Discord webhook, and three round buttons: Debug mode
+//! (a bug), Hunt's folder, quit. Updates install themselves while it isn't
+//! hunting.
 //!
 //! The hunter itself is pokehunt.py (hunt-engine.exe, next to Hunt.exe), run
 //! as a process of its own: what it prints goes to hunt.log, its "@state"
@@ -33,10 +34,10 @@ const NAME: &str = match option_env!("HUNT_NAME") {
     None => "dev",
 };
 const W: f32 = 360.0; // the pill
-const H: f32 = 52.0;
-const PANEL: f32 = 152.0; // what ••• adds under it
-const ROW: f32 = 44.0;
-const SLIDE: f32 = 0.45; // s, to grow into the panel or back
+const H: f32 = 40.0;
+const CONTROL: f32 = 26.0; // every button and box is this tall
+const INSET: f32 = (H - CONTROL) / 2.0; // the same room all round the pill's ends
+const TEXT: f32 = 13.0; // the words' size (a whole number draws crisper)
 
 const INK: Color32 = Color32::from_rgb(0x11, 0x11, 0x11);
 const PAPER: Color32 = Color32::WHITE;
@@ -63,7 +64,7 @@ fn look(light: bool) -> Look {
     if light {
         Look { fill: PAPER, ink: INK, dim: gray(0x6a), edge: gray(0xcf), hover: gray(0xe8), boxed: gray(0xef) }
     } else {
-        Look { fill: INK, ink: PAPER, dim: gray(0x8a), edge: gray(0x3a), hover: gray(0x2e), boxed: gray(0x22) }
+        Look { fill: INK, ink: PAPER, dim: gray(0x84), edge: gray(0x2c), hover: gray(0x26), boxed: gray(0x1d) }
     }
 }
 
@@ -126,24 +127,6 @@ fn is_webhook(url: &str) -> bool {
         })
 }
 
-/// "park" -> "Park Ball", "" -> "Repeat Ball".
-fn ball_name(text: &str) -> String {
-    let mut words: Vec<String> = text
-        .split_whitespace()
-        .map(|w| {
-            let mut c = w.chars();
-            c.next().map(|f| f.to_uppercase().collect::<String>() + &c.as_str().to_lowercase()).unwrap_or_default()
-        })
-        .collect();
-    if words.is_empty() {
-        return "Repeat Ball".into();
-    }
-    if !words.last().unwrap().ends_with("Ball") {
-        words.push("Ball".into());
-    }
-    words.join(" ")
-}
-
 fn open_path(path: &str) {
     #[cfg(windows)]
     {
@@ -203,7 +186,7 @@ struct Hunt {
     code: String,
     last_line: String,
     last_exit: Option<&'static str>,
-    restart_to: Option<String>,
+    restart_to: Option<(String, bool)>, // the mode, paused
     test: bool,
     reports: bool,
     fake: bool, // --smoke: a hunter that isn't there
@@ -212,26 +195,20 @@ struct Hunt {
     hook_edit: String,
     hook_open: bool,
     hook_note: Option<(&'static str, Instant)>,
-    ball: String,
-    ball_edit: String,
 
     update: Option<Map<String, Value>>,
     note: String,
-    update_sure: bool,
     installer: Option<PathBuf>,
     install_when_stopped: bool,
+    install_when_paused: bool,
+    stopped_by_you: bool, // stop pressed: once it's paused, a look for a new build
 
-    open: bool,
-    slide: Option<(Instant, f32, f32)>, // started, from, to
-    extra: f32,
-    lift: f32,
     pos: Option<Pos2>,
     pos_saved: Option<Pos2>,
     pos_changed: Option<Instant>,
-    sized: f32,
     was_found: String,
     smoke: Option<Smoke>,
-    start_now: bool, // --start: play pressed at once
+    start_now: bool, // the hunter starts with Hunt, paused (--start: hunting)
 }
 
 impl Hunt {
@@ -250,7 +227,9 @@ impl Hunt {
         let pos = settings.get("pos").and_then(Value::as_array).and_then(|a| {
             Some(pos2(a.first()?.as_f64()? as f32, a.get(1)?.as_f64()? as f32))
         });
+        hide_from_screenshots(cc);
         setup_fonts(&cc.egui_ctx);
+        egui_extras::install_image_loaders(&cc.egui_ctx); // the icons are SVG
         let mut visuals = egui::Visuals::dark();
         visuals.panel_fill = Color32::TRANSPARENT;
         visuals.window_fill = Color32::TRANSPARENT;
@@ -280,32 +259,22 @@ impl Hunt {
             hook_edit: String::new(),
             hook_open: false,
             hook_note: None,
-            ball: String::new(),
-            ball_edit: String::new(),
             update: None,
             note: String::new(),
-            update_sure: false,
             installer: None,
             install_when_stopped: false,
-            open: false,
-            slide: None,
-            extra: 0.0,
-            lift: 0.0,
+            install_when_paused: false,
+            stopped_by_you: false,
             pos,
             pos_saved: pos,
             pos_changed: None,
-            sized: H,
             was_found: String::new(),
             smoke: env::args().any(|a| a == "--smoke").then(Smoke::new),
-            start_now: env::args().any(|a| a == "--start"),
+            start_now: !env::args().any(|a| a == "--smoke"),
             paths,
         };
         hunt.hook = hunt.hook_saved();
-        hunt.ball = hunt.ball_saved();
-        hunt.ball_edit = hunt.ball.clone();
-        if version() > 0 {
-            hunt.watch_updates();
-        }
+        hunt.check_update();
         hunt
     }
 
@@ -321,11 +290,16 @@ impl Hunt {
 
     // ------------------------------------------------------------ the hunter
 
-    fn start(&mut self, mode: &str) {
+    /// The hunter: paused (when Hunt opens, so the website's code is there at
+    /// once) or hunting (play, after it ended on its own).
+    fn start(&mut self, mode: &str, paused: bool) {
         if self.running() {
             return;
         }
         let mut cmd = engine();
+        if paused {
+            cmd.push("--paused".into());
+        }
         cmd.extend(match mode {
             "watch" => vec!["--watch"],
             "debug" => vec!["--debug"],
@@ -421,9 +395,15 @@ impl Hunt {
     /// New settings: a hunt that's on starts again with them, once the old one is gone.
     fn restart(&mut self) {
         if self.proc.is_some() && (self.mode == "hunt" || self.mode == "debug" || self.mode == "watch") {
-            self.restart_to = Some(self.mode.clone());
+            self.restart_to = Some((self.mode.clone(), !self.hunting()));
             self.stop();
         }
+    }
+
+    /// Hunting, not paused (by you, a find or Ctrl+Shift+H).
+    fn hunting(&self) -> bool {
+        let flag = |k: &str| self.state.get(k).and_then(Value::as_bool).unwrap_or(false);
+        self.running() && (flag("running") || flag("remote"))
     }
 
     fn got_line(&mut self, line: String) {
@@ -467,7 +447,16 @@ impl Hunt {
             }
         }
         self.was_found = if found { enc } else { String::new() };
+        let hunting = flag("running") || flag("remote");
         self.state = s;
+        if !hunting && std::mem::take(&mut self.stopped_by_you) {
+            self.check_update();
+        }
+        if !hunting && self.install_when_paused {
+            self.install_when_paused = false;
+            self.install_when_stopped = true;
+            self.stop(); // ended() installs, once the hunter is gone
+        }
     }
 
     fn ended(&mut self, ok: bool) {
@@ -485,8 +474,8 @@ impl Hunt {
         self.was_found.clear();
         if self.install_when_stopped {
             self.install();
-        } else if let Some(mode) = self.restart_to.take() {
-            self.start(&mode);
+        } else if let Some((mode, paused)) = self.restart_to.take() {
+            self.start(&mode, paused);
         }
     }
 
@@ -499,26 +488,34 @@ impl Hunt {
 
     /// Play: not hunting, or paused (by a find, or Ctrl+Shift+H). Otherwise stop.
     fn shows_play(&self) -> bool {
-        let s = &self.state;
-        !self.running()
-            || (!s.is_empty() && !s.get("running").and_then(Value::as_bool).unwrap_or(false)
-                && !s.get("remote").and_then(Value::as_bool).unwrap_or(false) && self.mode != "diagnose")
+        !self.hunting() && self.mode != "diagnose"
     }
 
+    fn hunt_mode() -> &'static str {
+        if env::var_os("HUNT_WATCH").is_some() { "watch" } else { "hunt" }
+    }
+
+    /// Play carries on, stop pauses: the hunter stays (and so does the website's
+    /// code) until an update or quit. A hunter that ended on its own starts again.
     fn main_button(&mut self) {
+        if env::var_os("HUNT_PREVIEW").is_some() {
+            return; // a look at the window: its hunter stays paused
+        }
         if !self.running() {
-            let mode = if env::var_os("HUNT_WATCH").is_some() { "watch" } else { "hunt" };
-            self.start(mode);
-        } else if self.shows_play() {
-            self.send("toggle");
+            self.start(Self::hunt_mode(), false);
         } else {
-            self.stop();
+            if self.hunting() {
+                self.stopped_by_you = true;
+            }
+            self.send("toggle");
         }
     }
 
     fn code_text(&self) -> String {
         let web = self.running() && matches!(self.mode.as_str(), "hunt" | "debug" | "calibrate");
-        if web && !self.code.is_empty() {
+        if !self.note.is_empty() {
+            self.note.clone()
+        } else if web && !self.code.is_empty() {
             self.code.clone()
         } else if self.running() {
             String::new()
@@ -555,48 +552,6 @@ impl Hunt {
         self.restart();
     }
 
-    fn ball_saved(&self) -> String {
-        let cfg = read_json(&self.paths.config).unwrap_or_default();
-        let catch = cfg.get("catch").and_then(Value::as_object);
-        let get = |k: &str| catch.and_then(|c| c.get(k)).and_then(Value::as_str).map(String::from);
-        if get("first_ball").as_deref() == Some("Park Ball") {
-            return "Park Ball".into();
-        }
-        get("awake_ball").unwrap_or_else(|| "Repeat Ball".into())
-    }
-
-    /// The preferred ball, in config.json's catch plan: a Quick Ball first,
-    /// then this one. A Park Ball is the only ball (it never misses).
-    fn ball_done(&mut self) {
-        let ball = ball_name(&self.ball_edit);
-        self.ball_edit = ball.clone();
-        if ball == self.ball {
-            return;
-        }
-        let Some(mut cfg) = read_json(&self.paths.config) else {
-            self.ball_edit = self.ball.clone();
-            return;
-        };
-        let mut catch = cfg.get("catch").and_then(Value::as_object).cloned().unwrap_or_default();
-        for k in ["first_ball", "awake_ball", "asleep_ball", "new_ball"] {
-            catch.remove(k); // the defaults: a Quick Ball, then Repeat Balls (Dive Balls for new ones)
-        }
-        let keys: &[&str] = if ball == "Park Ball" {
-            &["first_ball", "awake_ball", "asleep_ball", "new_ball"]
-        } else if ball != "Repeat Ball" {
-            &["awake_ball", "asleep_ball", "new_ball"]
-        } else {
-            &[]
-        };
-        for k in keys {
-            catch.insert((*k).into(), Value::String(ball.clone()));
-        }
-        cfg.insert("catch".into(), Value::Object(catch));
-        write_json(&self.paths.config, &cfg);
-        self.ball = ball;
-        self.restart();
-    }
-
     fn flip_test(&mut self) {
         self.test = !self.test;
         let cmd = if self.test { "test on" } else { "test off" };
@@ -605,10 +560,14 @@ impl Hunt {
 
     // ------------------------------------------------------------ updates
 
-    /// Once at the start and then every 6 hours: a newer build on the website?
-    fn watch_updates(&self) {
+    /// When Hunt opens and whenever a hunt stops: a newer build on the website?
+    /// It's downloaded, installed, and Hunt starts again (the installer starts it).
+    fn check_update(&self) {
+        if version() == 0 {
+            return; // a build of one's own
+        }
         let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
-        thread::spawn(move || loop {
+        thread::spawn(move || {
             let info = ureq::get(&format!("{}/windows.json", site()))
                 .set("User-Agent", &format!("Hunt (windows, {NAME})"))
                 .timeout(Duration::from_secs(15))
@@ -622,18 +581,15 @@ impl Hunt {
                     ctx.request_repaint();
                 }
             }
-            thread::sleep(Duration::from_secs(6 * 3600));
         });
     }
 
-    fn update_button(&mut self) {
+    /// A newer build: downloaded and installed while it isn't hunting
+    /// (if a hunt started meanwhile, once it stops).
+    fn download_update(&mut self) {
         let Some(info) = self.update.clone() else { return };
-        if !self.note.is_empty() {
+        if !self.note.is_empty() || self.installer.is_some() {
             return; // on its way
-        }
-        if self.running() && !self.update_sure {
-            self.update_sure = true; // a second click: it stops the hunt for a minute
-            return;
         }
         self.note = "Downloading".into();
         let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
@@ -700,45 +656,6 @@ impl Hunt {
         ctx.input(|i| i.viewport().monitor_size).unwrap_or(vec2(1920.0, 1080.0))
     }
 
-    fn more(&mut self, ctx: &egui::Context) {
-        self.open = !self.open;
-        let full = H + PANEL;
-        if self.open {
-            // the window gets the panel's room first, then the pill grows into it
-            ctx.send_viewport_cmd(ViewportCommand::InnerSize(vec2(W, full)));
-            self.sized = full;
-            if let Some(pos) = self.pos {
-                self.lift = (pos.y + full - (self.monitor(ctx).y - 48.0)).max(0.0);
-                if self.lift > 0.0 {
-                    ctx.send_viewport_cmd(ViewportCommand::OuterPosition(pos2(pos.x, pos.y - self.lift)));
-                }
-            }
-        }
-        self.slide = Some((Instant::now(), self.extra, if self.open { PANEL } else { 0.0 }));
-    }
-
-    fn animate(&mut self, ctx: &egui::Context) {
-        let Some((t0, from, to)) = self.slide else { return };
-        let t = (t0.elapsed().as_secs_f32() / SLIDE).min(1.0);
-        let k = if t < 0.5 { 4.0 * t * t * t } else { 1.0 - (-2.0 * t + 2.0).powi(3) / 2.0 }; // eased in and out
-        self.extra = from + (to - from) * k;
-        if t < 1.0 {
-            ctx.request_repaint();
-            return;
-        }
-        self.slide = None;
-        if !self.open {
-            ctx.send_viewport_cmd(ViewportCommand::InnerSize(vec2(W, H)));
-            self.sized = H;
-            if self.lift > 0.0 {
-                if let Some(pos) = self.pos {
-                    ctx.send_viewport_cmd(ViewportCommand::OuterPosition(pos));
-                }
-                self.lift = 0.0;
-            }
-        }
-    }
-
     /// Where the pill is: followed as it's dragged, kept in window.json.
     fn track_place(&mut self, ctx: &egui::Context) {
         let Some(outer) = ctx.input(|i| i.viewport().outer_rect) else { return };
@@ -747,14 +664,14 @@ impl Hunt {
             self.pos = None; // the screen it was on is gone
         }
         if self.pos.is_none() {
-            // first time on this PC: the top middle, room under it for the panel
+            // first time on this PC: the top middle
             let at = pos2(((screen.x - W) / 2.0).round(), 60.0);
             ctx.send_viewport_cmd(ViewportCommand::OuterPosition(at));
             self.pos = Some(at);
             return;
         }
-        let at = pos2(outer.min.x, outer.min.y + self.lift);
-        if self.slide.is_none() && Some(at) != self.pos && (at - self.pos.unwrap()).length() > 0.5 {
+        let at = outer.min;
+        if (at - self.pos.unwrap()).length() > 0.5 {
             self.pos = Some(at);
             self.pos_changed = Some(Instant::now());
         }
@@ -776,8 +693,8 @@ impl Hunt {
         let c = look(light);
         let r = H / 2.0;
 
-        // the outline, as tall as it's grown; dragged by anything that isn't a button
-        let shape = Rect::from_min_size(Pos2::ZERO, vec2(W, H + self.extra));
+        // the outline; dragged by anything that isn't a button
+        let shape = Rect::from_min_size(Pos2::ZERO, vec2(W, H));
         painter.rect_filled(shape, r, c.edge); // a hairline around it, for dark games
         painter.rect_filled(shape.shrink(1.0), r - 1.0, c.fill);
         let bg = ui.interact(shape, Id::new("bg"), Sense::click_and_drag());
@@ -785,32 +702,30 @@ impl Hunt {
             ctx.send_viewport_cmd(ViewportCommand::StartDrag);
         }
         if bg.clicked() {
-            ctx.memory_mut(|m| {
-                m.surrender_focus(Id::new("hook"));
-                m.surrender_focus(Id::new("ball"));
-            });
+            ctx.memory_mut(|m| m.surrender_focus(Id::new("hook")));
         }
-
-        // ---- the pill: start / stop, the website code, the webhook box, •••
         let cy = H / 2.0;
-        let main = pos2(25.0, cy);
-        let resp = ui.interact(Rect::from_center_size(main, vec2(34.0, 34.0)), Id::new("main"), Sense::click());
-        painter.circle_filled(main, 17.0, if resp.hovered() { c.dim } else { c.ink });
+
+        // start / stop
+        let main = pos2(INSET + CONTROL / 2.0, cy);
+        let resp = ui.interact(Rect::from_center_size(main, Vec2::splat(CONTROL)), Id::new("main"), Sense::click());
+        painter.circle_filled(main, CONTROL / 2.0, if resp.hovered() { c.dim } else { c.ink });
         if self.shows_play() {
-            let pts = vec![main + vec2(-4.0, -6.5), main + vec2(-4.0, 6.5), main + vec2(7.0, 0.0)];
+            let pts = vec![main + vec2(-3.0, -5.0), main + vec2(-3.0, 5.0), main + vec2(5.5, 0.0)];
             painter.add(egui::Shape::convex_polygon(pts, c.fill, Stroke::NONE));
         } else {
-            painter.rect_filled(Rect::from_center_size(main, vec2(11.0, 11.0)), 1.0, c.fill);
+            painter.rect_filled(Rect::from_center_size(main, vec2(8.0, 8.0)), 1.0, c.fill);
         }
         if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
             self.main_button();
         }
 
-        let left = main.x + 31.0;
+        // the website code (or a word: Done, Stopped, an update's progress), which opens the website
+        let left = main.x + CONTROL / 2.0 + 12.0;
         let words = self.code_text();
-        let shown = if words.is_empty() { "------".to_string() } else { words.clone() };
+        let shown = words.clone(); // nothing, for the moment it takes to connect
         let is_code = !self.code.is_empty() && shown == self.code;
-        let code_font = FontId::new(15.0, FontFamily::Name("code".into()));
+        let code_font = FontId::new(13.0, FontFamily::Name("code".into()));
         let area = painter.text(pos2(left, cy), Align2::LEFT_CENTER, &shown, code_font.clone(), Color32::TRANSPARENT);
         let resp = ui.interact(area.expand(4.0), Id::new("code"), Sense::click());
         let color = if is_code && (light || resp.hovered()) {
@@ -827,25 +742,39 @@ impl Hunt {
             open_path(&format!("{}/app", site()));
         }
 
-        let more = pos2(W - 28.0, cy);
-        let resp = ui.interact(Rect::from_center_size(more, vec2(30.0, 30.0)), Id::new("more"), Sense::click());
-        if resp.hovered() || self.open {
-            painter.circle_filled(more, 15.0, c.hover);
-        }
-        for dx in [-6.0, 0.0, 6.0] {
-            painter.circle_filled(more + vec2(dx, 0.0), 1.8, c.ink);
-        }
-        if self.update.is_some() {
-            painter.circle_filled(more + vec2(10.0, -9.0), 2.4, c.ink); // an update waits in the panel
-        }
-        if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
-            self.more(&ctx);
+        // from the right end: quit, Hunt's folder, Debug mode
+        let gap = 6.0;
+        let quit = pos2(W - INSET - CONTROL / 2.0, cy);
+        let folder = quit - vec2(CONTROL + gap, 0.0);
+        let bug = folder - vec2(CONTROL + gap, 0.0);
+        for (id, at) in [("test", bug), ("folder", folder), ("quit", quit)] {
+            let resp = ui.interact(Rect::from_center_size(at, Vec2::splat(CONTROL)), Id::new(id), Sense::click());
+            let on = id == "test" && self.test; // Debug mode: white while it's on
+            let hovered = resp.hovered();
+            painter.circle_filled(at, CONTROL / 2.0, if on { c.ink } else if hovered { c.hover } else { c.boxed });
+            let tint = if on { c.fill } else if hovered { c.ink } else if light { gray(0x55) } else { gray(0xb4) };
+            let icon = match id {
+                "test" => egui::include_image!("../icons/bug.svg"),
+                "folder" => egui::include_image!("../icons/folder.svg"),
+                _ => egui::include_image!("../icons/x.svg"),
+            };
+            let size = if id == "quit" { 13.0 } else { 15.0 };
+            egui::Image::new(icon).tint(tint).paint_at(ui, Rect::from_center_size(at, Vec2::splat(size)));
+            if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
+                match id {
+                    "test" => self.flip_test(),
+                    "folder" => open_path(&self.paths.data.to_string_lossy()),
+                    _ => self.quit(&ctx),
+                }
+            }
         }
 
-        let hook_box = Rect::from_min_max(pos2(left + 92.0, cy - 14.0), pos2(more.x - 20.0, cy + 14.0));
-        painter.rect_filled(hook_box, 14.0, c.boxed);
-        let inner = hook_box.shrink2(vec2(12.0, 3.0));
-        let text_font = FontId::proportional(14.0);
+        // the webhook box, between
+        let hook_box = Rect::from_min_max(pos2(left + 70.0, cy - CONTROL / 2.0),
+                                          pos2(bug.x - CONTROL / 2.0 - 8.0, cy + CONTROL / 2.0));
+        painter.rect_filled(hook_box, CONTROL / 2.0, c.boxed);
+        let inner = hook_box.shrink2(vec2(11.0, 2.0));
+        let text_font = FontId::proportional(TEXT);
         if self.hook_open {
             let edit = egui::TextEdit::singleline(&mut self.hook_edit)
                 .id(Id::new("hook"))
@@ -878,74 +807,6 @@ impl Hunt {
                 ctx.memory_mut(|m| m.request_focus(Id::new("hook")));
             }
         }
-
-        // ---- the panel, inside the same outline
-        let settled = self.open && self.slide.is_none_or(|(t0, _, _)| t0.elapsed().as_secs_f32() > SLIDE * 0.8);
-        if !settled {
-            return;
-        }
-        let pad = 22.0;
-        painter.line_segment([pos2(pad, H), pos2(W - pad, H)], Stroke::new(1.0_f32, c.edge));
-        let label = FontId::proportional(14.0);
-        let row = |i: f32| H + 6.0 + ROW * (i + 0.5);
-
-        let y = row(0.0);
-        painter.text(pos2(pad, y), Align2::LEFT_CENTER, "Debug mode", label.clone(), c.ink);
-        let track = Rect::from_min_max(pos2(W - pad - 40.0, y - 11.0), pos2(W - pad, y + 11.0));
-        let resp = ui.interact(track, Id::new("test"), Sense::click());
-        let (fill, knob) = if self.test { (c.ink, c.fill) } else { (c.edge, c.dim) };
-        painter.rect_filled(track, 11.0, fill);
-        painter.circle_filled(pos2(if self.test { track.max.x - 11.0 } else { track.min.x + 11.0 }, y), 8.0, knob);
-        if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
-            self.flip_test();
-        }
-
-        let y = row(1.0);
-        painter.text(pos2(pad, y), Align2::LEFT_CENTER, "Preferred ball", label.clone(), c.ink);
-        let ball_box = Rect::from_min_max(pos2(W - pad - 150.0, y - 14.0), pos2(W - pad, y + 14.0));
-        painter.rect_filled(ball_box, 14.0, c.boxed);
-        let edit = egui::TextEdit::singleline(&mut self.ball_edit)
-            .id(Id::new("ball"))
-            .frame(false)
-            .font(label.clone())
-            .text_color(c.ink)
-            .margin(egui::Margin::ZERO)
-            .vertical_align(egui::Align::Center);
-        if ui.put(ball_box.shrink2(vec2(12.0, 3.0)), edit).lost_focus() {
-            self.ball_done();
-        }
-
-        // Update, Folder, Quit: one row of pills
-        let y = row(1.0) + ROW + 2.0;
-        let (gap, bw) = (10.0, (W - 2.0 * pad - 20.0) / 3.0);
-        let update_words = if self.update.is_none() {
-            "Up to date".to_string()
-        } else if !self.note.is_empty() {
-            self.note.clone()
-        } else if self.update_sure {
-            "Stops the hunt".into()
-        } else {
-            "Update".into()
-        };
-        for (i, (id, words)) in [("update", update_words.as_str()), ("folder", "Folder"), ("quit", "Quit")]
-            .into_iter()
-            .enumerate()
-        {
-            let b = Rect::from_min_size(pos2(pad + i as f32 * (bw + gap), y - 16.0), vec2(bw, 32.0));
-            let on = id != "update" || self.update.is_some();
-            let filled = id == "update" && self.update.is_some();
-            let resp = ui.interact(b, Id::new(id), if on { Sense::click() } else { Sense::hover() });
-            painter.rect_filled(b, 16.0, if filled { c.ink } else { c.boxed });
-            let color = if filled { c.fill } else if !on { c.edge } else if resp.hovered() { c.ink } else { gray(0xc8) };
-            painter.text(b.center(), Align2::CENTER_CENTER, words, label.clone(), if light && !filled && on { c.ink } else { color });
-            if on && resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
-                match id {
-                    "update" => self.update_button(),
-                    "folder" => open_path(&self.paths.data.to_string_lossy()),
-                    _ => self.quit(&ctx),
-                }
-            }
-        }
     }
 
     fn quit(&mut self, ctx: &egui::Context) {
@@ -961,17 +822,23 @@ impl eframe::App for Hunt {
                 Msg::Line(id, line) if self.proc.as_ref().map(|p| p.id) == Some(id) => self.got_line(line),
                 Msg::Ended(id, ok) if self.proc.as_ref().map(|p| p.id) == Some(id) => self.ended(ok),
                 Msg::Line(..) | Msg::Ended(..) => {}
-                Msg::Update(info) => self.update = Some(info),
+                Msg::Update(info) => {
+                    self.update = Some(info);
+                    if !self.running() {
+                        self.download_update();
+                    }
+                }
                 Msg::Progress(p) => self.note = p,
                 Msg::UpdateFailed(e) => {
                     self.say(&format!("the update didn't download: {e}"));
                     self.note.clear();
-                    self.update_sure = false;
                 }
                 Msg::Downloaded(path) => {
                     self.installer = Some(path);
                     self.note = "Installing".into();
-                    if self.proc.is_some() {
+                    if self.hunting() {
+                        self.install_when_paused = true; // once you stop it
+                    } else if self.proc.is_some() {
                         self.install_when_stopped = true;
                         self.stop(); // ended() installs, once the hunter is gone
                     } else {
@@ -983,10 +850,9 @@ impl eframe::App for Hunt {
         if ctx.input(|i| i.viewport().close_requested()) {
             self.stop();
         }
-        self.animate(ctx);
         self.track_place(ctx);
         if std::mem::take(&mut self.start_now) {
-            self.main_button();
+            self.start(Self::hunt_mode(), !env::args().any(|a| a == "--start"));
         }
         if let Some(mut smoke) = self.smoke.take() {
             smoke.step(self, ctx);
@@ -1015,35 +881,45 @@ fn chrono_now() -> String {
     }
 }
 
+/// It's on top of Roblox, so the hunter's screenshots (and anyone's) look
+/// through it, at the game under it (Windows 10 2004 and later).
+fn hide_from_screenshots(cc: &eframe::CreationContext) {
+    #[cfg(windows)]
+    {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        if let Ok(handle) = cc.window_handle() {
+            if let RawWindowHandle::Win32(h) = handle.as_raw() {
+                unsafe {
+                    windows_sys::Win32::UI::WindowsAndMessaging::SetWindowDisplayAffinity(
+                        h.hwnd.get() as _, 0x11); // WDA_EXCLUDEFROMCAPTURE
+                }
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = cc;
+}
+
 // ---------------------------------------------------------------- fonts
 
 fn setup_fonts(ctx: &egui::Context) {
+    // Inter (fonts/, SIL Open Font License: fonts/Inter-LICENSE.txt), the same on every PC:
+    // Regular for the words, Medium for the website code
     let mut fonts = egui::FontDefinitions::default();
-    let mut add = |name: &str, paths: &[(&str, u32)], family: FontFamily| {
-        for (path, index) in paths {
-            if let Ok(bytes) = fs::read(path) {
-                let mut data = egui::FontData::from_owned(bytes);
-                data.index = *index;
-                fonts.font_data.insert(name.into(), Arc::new(data));
-                fonts.families.entry(family.clone()).or_default().insert(0, name.into());
-                return;
-            }
-        }
-    };
-    add("ui", &[("C:\\Windows\\Fonts\\segoeui.ttf", 0), ("/System/Library/Fonts/Helvetica.ttc", 0)],
-        FontFamily::Proportional);
-    add("code", &[("C:\\Windows\\Fonts\\consolab.ttf", 0), ("/System/Library/Fonts/Menlo.ttc", 1)],
-        FontFamily::Name("code".into()));
-    // the code's family needs something even where neither font is
-    let fallback = fonts.families[&FontFamily::Monospace].clone();
-    fonts.families.entry(FontFamily::Name("code".into())).or_default().extend(fallback);
+    let inter = |bytes: &'static [u8]| Arc::new(egui::FontData::from_static(bytes));
+    fonts.font_data.insert("inter".into(), inter(include_bytes!("../fonts/Inter-Regular.ttf")));
+    fonts.font_data.insert("inter-medium".into(), inter(include_bytes!("../fonts/Inter-Medium.ttf")));
+    fonts.families.entry(FontFamily::Proportional).or_default().insert(0, "inter".into());
+    let mut code = vec!["inter-medium".to_string()];
+    code.extend(fonts.families[&FontFamily::Proportional].clone());
+    fonts.families.insert(FontFamily::Name("code".into()), code);
     ctx.set_fonts(fonts);
 }
 
 // ---------------------------------------------------------------- --smoke
 
 /// The Windows build's check (--smoke): the pill comes up and goes through its
-/// states, the webhook box, the panel and the preferred ball, then closes.
+/// states, the webhook box and Debug mode, then closes.
 /// smoke.txt says how it went; anything wrong ends Hunt.exe with 1.
 struct Smoke {
     t0: Instant,
@@ -1060,7 +936,7 @@ impl Smoke {
         ctx.request_repaint();
         let at = self.t0.elapsed().as_secs_f32();
         let state = |v: Value| v.as_object().cloned().unwrap_or_default();
-        let stages: &[f32] = &[0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 3.4, 4.0];
+        let stages: &[f32] = &[0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 2.4, 3.4, 4.0];
         if self.stage >= stages.len() || at < stages[self.stage] {
             return;
         }
@@ -1080,26 +956,9 @@ impl Smoke {
                     self.errors.push("the webhook didn't clear".into());
                 }
             }
-            5 => {
-                h.update = Some(state(json!({"version": version() + 1, "name": "smoke"})));
-                h.more(ctx);
-            }
-            6 => { h.flip_test(); h.flip_test(); }
+            5 => { h.flip_test(); h.flip_test(); }
+            6 => {} // for the build's picture
             7 => {
-                let mut saved = Vec::new();
-                for ball in ["park", "ultra ball", ""] {
-                    h.ball_edit = ball.into();
-                    h.ball_done();
-                    let cfg = read_json(&h.paths.config).unwrap_or_default();
-                    saved.push(cfg.get("catch").and_then(|c| c.get("awake_ball")).and_then(Value::as_str)
-                        .unwrap_or("-").to_string());
-                }
-                if saved != ["Park Ball", "Ultra Ball", "-"] {
-                    self.errors.push(format!("the preferred ball saved as {saved:?}"));
-                }
-            }
-            8 => {} // open, for the build's picture
-            9 => {
                 let outer = ctx.input(|i| i.viewport().outer_rect).unwrap_or(Rect::NOTHING);
                 let words = if self.errors.is_empty() {
                     format!("ok: the pill is {} x {} at {}, {}\n", outer.width(), outer.height(), outer.min.x, outer.min.y)
@@ -1148,8 +1007,9 @@ fn main() -> eframe::Result {
         .with_decorations(false)
         .with_transparent(true)
         .with_resizable(false)
+        .with_always_on_top() // over Roblox too (the hunter's screenshots see through it on Windows)
         .with_taskbar(true);
-    if let Ok(icon) = eframe::icon_data::from_png_bytes(include_bytes!("../../site/app/icon-192.png")) {
+    if let Ok(icon) = eframe::icon_data::from_png_bytes(include_bytes!("../icons/clodsire-192.png")) {
         viewport = viewport.with_icon(Arc::new(icon));
     }
     let settings = read_json(&Paths::new().settings).unwrap_or_default();
