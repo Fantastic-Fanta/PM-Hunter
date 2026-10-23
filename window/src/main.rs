@@ -997,9 +997,11 @@ impl Hunt {
             // just the ball at the right end now, going
             let gone = ease_in((since - FOLD) / VANISH);
             let (ball, radius) = (pos2(W - r, r), r * (1.0 - gone));
-            let fill = if self.progress.is_some() { c.ink } else { c.fill }; // (white after "Installing")
             painter.circle_filled(ball, radius, c.edge.gamma_multiply(1.0 - gone));
-            painter.circle_filled(ball, (radius - 1.0).max(0.0), fill.gamma_multiply(1.0 - gone));
+            painter.circle_filled(ball, (radius - 1.0).max(0.0), c.fill.gamma_multiply(1.0 - gone));
+            if self.progress.is_some() { // (the bar's white end, as after "Installing")
+                painter.circle_filled(ball, (radius - INSET).max(0.0), c.ink.gamma_multiply(1.0 - gone));
+            }
             return;
         }
         if lift > 0.0 {
@@ -1021,36 +1023,38 @@ impl Hunt {
         if env::var_os("HUNT_PREVIEW_UPDATE").is_some() {
             // a look at the update: the pill as it is for 3 s, down in 4 s, installing, closed
             self.progress = (t > 3.0).then(|| ((t - 3.5) / 4.0).clamp(0.0, 1.0));
+            ctx.request_repaint(); // (a real one's redrawn as it comes down)
             if t > 9.5 && self.closing.is_none() {
                 self.close_with(&ctx, false);
             }
         }
 
-        // an update on its way: the whole pill one progress bar, white filling it from the
-        // left, "Installing" once it's all white; then Hunt closes, and the installer opens
-        // the new one
+        // an update on its way: the pill goes darker as what's in it fades, and play's white
+        // circle stretches rightwards along it as the update comes down, "Installing" once
+        // it's all the way; then Hunt closes, and the installer opens the new one
         let updating = ctx.animate_bool_with_time(Id::new("updating"), self.progress.is_some() && !self.hunting(), 0.7);
         if updating > 0.0 {
             ui.disable(); // (what's under it can't be clicked while it comes)
-            // what's in the pill dissolves into its black first, then the bar's words come up
-            let dark = ease(updating / 0.55);
-            let words = ease((updating - 0.4) / 0.6);
             let layer = egui::LayerId::new(egui::Order::Foreground, Id::new("update"));
             ctx.set_transform_layer(layer, egui::emath::TSTransform::new(MARGIN + middle * (1.0 - s), s));
-            let p = ctx.layer_painter(layer);
-            let inner = shape.shrink(1.0);
+            let p = ctx.layer_painter(layer).with_clip_rect(shape.shrink(1.0));
+            let dark = ease(updating / 0.55); // what's in the pill fades into its black first
+            let words = ease((updating - 0.4) / 0.6); // then the words come up
+            p.rect_filled(shape.shrink(1.0), r - 1.0, Color32::BLACK.gamma_multiply(dark));
+            // play's circle, where it is, stretched by how much is down
             let done = ctx.animate_value_with_time(Id::new("progress"), self.progress.unwrap_or(1.0), 0.3);
-            let cut = inner.min.x + inner.width() * done;
-            let (filled, empty) = (inner.with_max_x(cut), inner.with_min_x(cut));
-            p.rect_filled(inner, r - 1.0, c.fill.gamma_multiply(dark));
-            p.with_clip_rect(filled).rect_filled(inner, r - 1.0, c.ink.gamma_multiply(dark));
+            let track = Rect::from_min_max(pos2(shape.min.x + INSET, H / 2.0 - CONTROL / 2.0),
+                                           pos2(shape.max.x - INSET, H / 2.0 + CONTROL / 2.0));
+            let bar = track.with_max_x(track.min.x + CONTROL + (track.width() - CONTROL).max(0.0) * done);
+            p.rect_filled(track, CONTROL / 2.0, c.boxed.gamma_multiply(0.5 * words)); // the way it goes
+            p.rect_filled(bar, CONTROL / 2.0, c.ink.gamma_multiply(dark));
             let label = if done < 0.995 { format!("Updating  {:.0}%", done * 100.0) } else { "Installing".into() };
             let font = FontId::proportional(TEXT);
+            let at = track.center();
             // the words white on the black, black on the white
-            p.with_clip_rect(empty).text(inner.center(), Align2::CENTER_CENTER, &label, font.clone(),
-                                         c.ink.gamma_multiply(words));
-            p.with_clip_rect(filled).text(inner.center(), Align2::CENTER_CENTER, &label, font,
-                                          c.fill.gamma_multiply(words));
+            p.with_clip_rect(track.with_min_x(bar.max.x)).text(at, Align2::CENTER_CENTER, &label, font.clone(),
+                                                               c.ink.gamma_multiply(words));
+            p.with_clip_rect(bar).text(at, Align2::CENTER_CENTER, &label, font, Color32::BLACK.gamma_multiply(words));
             ctx.request_repaint();
             if updating >= 1.0 {
                 return; // all under it now
