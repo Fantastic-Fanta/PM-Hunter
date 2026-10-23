@@ -38,7 +38,7 @@ if ! gh run watch $id --exit-status --interval 20 > /dev/null; then
   exit 1
 fi
 # what Windows read of the samples, and the sizes
-gh run view $id --log | grep -E "read like on the Mac|MB installed" | sed -E 's/^.*[0-9]Z //' || true
+gh run view $id --log | sed -E 's/^.*[0-9]Z //' | grep -E "read like on the Mac|^[0-9.]+ MB installed" || true
 
 out=$(mktemp -d)
 gh run download $id -n HuntSetup -D $out
