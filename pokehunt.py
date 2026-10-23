@@ -1317,6 +1317,15 @@ def plain_row_in_sight(rgb, texts, split, lay):
                          for t, x, y in texts)
 
 
+def type_in(box, text):
+    """A click in a text box (the bag's search), a moment for Roblox to give it focus
+    (typing at once went nowhere), what was in it cleared, and text typed."""
+    click_at(*box)
+    time.sleep(0.4)
+    dev.type(text, clear=True)
+    time.sleep(0.3)
+
+
 def search_box(texts, split, v):
     """The bag's search box: just under Close, whatever it shows ("Search",
     "QUICK BALL", a lowercase "full" left in it), never the menu bar's
@@ -1381,8 +1390,7 @@ def use_item(lay, tab, item, target=None, prefer=None, in_battle=True):
                     box = search_box(texts, split, v)
                     if box:
                         trace(f"bag: looking for a favorited {prefer}")
-                        click_at(*box)
-                        dev.type(prefer, erase=25)
+                        type_in(box, prefer)
                         looking, tab_at = "searched", time.time()
                     else:
                         looking = "done"
@@ -1408,8 +1416,7 @@ def use_item(lay, tab, item, target=None, prefer=None, in_battle=True):
             elif not searched and time.time() - tab_at > 1.5:
                 box = search_box(texts, split, v)
                 if box:  # not a favorite: type it into the tab's search box
-                    click_at(*box)
-                    dev.type(item, erase=25)
+                    type_in(box, item)
                     searched = True
         elif step == "use":
             use = find_use_button(load_rgb(img), row_y) or next(
@@ -1664,17 +1671,16 @@ def menu_button(hit, texts, retry):
     return hit if retry or not rows else (x, y - min(rows) / 2)
 
 
-def save_game():
+def save_game(wait=0.0):
     """MENU -> Save -> dismiss the message -> close MENU, between
     encounters. True if the game saved; if it said to wait, save_wait has
-    how long."""
-    img = grab()
-    texts = screen_texts(img)
-    tab = next(((x, y) for t, x, y in texts if norm(t) == "menu"), None)
-    if not tab or find_mute(load_rgb(img)):
-        return False
-    trace(f"save: MENU at ({tab[0]:.0f}, {tab[1]:.0f})")
-    click_at(*tab)
+    how long. wait: s to look for MENU's tab in."""
+    if not menu_open(screen_texts(grab())):  # (open already, after the bag: straight to Save)
+        tab = menu_tab(wait)
+        if not tab:
+            return False
+        trace(f"save: MENU at ({tab[0]:.0f}, {tab[1]:.0f})")
+        click_at(*tab)
     step, saved, shown, saved_at, tries = "save", False, False, 0.0, 0
     end = time.time() + 20
     while time.time() < end:
@@ -1737,12 +1743,26 @@ def need_pp(lead, move, plan):
               "(the game takes it only outside battles)", flush=True)
 
 
+def menu_tab(seconds=0.0):
+    """MENU's tab, between encounters: (x, y), or None if it isn't read in seconds.
+    A battle on screen waits (its last words: "You have won the battle!") till then;
+    with no seconds, it's None at once (an encounter came first)."""
+    end = time.time() + seconds
+    while True:
+        img = grab()
+        battle = find_mute(load_rgb(img))
+        if battle and not seconds:
+            return None
+        tab = None if battle else next(((x, y) for t, x, y in screen_texts(img) if norm(t) == "menu"), None)
+        if tab or time.time() >= end:
+            return tab
+        time.sleep(0.3)
+
+
 def open_bag(why):
     """MENU -> Bag, between encounters. True once Bag's clicked (the bag's on its way)."""
-    img = grab()
-    texts = screen_texts(img)
-    tab = next(((x, y) for t, x, y in texts if norm(t) == "menu"), None)
-    if not tab or find_mute(load_rgb(img)):
+    tab = menu_tab(12)  # (out of the battle first: it can take a few seconds to go)
+    if not tab:
         return False
     trace(f"{why}: MENU at ({tab[0]:.0f}, {tab[1]:.0f})")
     click_at(*tab)
@@ -1775,14 +1795,13 @@ def restore_pp(plan, lay):
     return bool(used)
 
 
-def favorite_in_bag(lay, tab, items):
-    """The bag's open: tab's items favorited (a right click on one that isn't;
-    favorites sit at the top). {item: "already", "now", or why not}."""
+def favorites_in_bag(lay, tab, items):
+    """The bag's open: whether tab's items are favorites (at its top, a yellow tag),
+    without changing any. {item: True / False}; False too for one not in sight."""
     split = lay.pt(BAG_SPLIT, 0)[0]
-    v = lay.s * lay.fit[1]
-    done, tabbed, searched, clicked, end = {}, False, set(), set(), time.time() + 20
-    while time.time() < end and len(done) < len(items):
-        time.sleep(0.5)
+    seen, tabbed, end = {}, False, time.time() + 8
+    while time.time() < end:
+        time.sleep(0.4)
         img = grab()
         rgb, texts = load_rgb(img), screen_texts(img)
         if not tabbed:
@@ -1791,59 +1810,60 @@ def favorite_in_bag(lay, tab, items):
                 click_at(*hit)
                 tabbed = True
             continue
+        if not any(re.fullmatch(r"x[\d,.]+", t) for t, _, _ in texts):
+            continue  # the list isn't up yet
         for item in items:
-            if item in done:
-                continue
-            rows = sorted((y, x) for t, x, y in texts if norm(t) == norm(item) and x < split)
-            if not rows:
-                box = search_box(texts, split, v)
-                if item not in searched and box:  # not near the top: not a favorite; searched for
-                    click_at(*box)
-                    dev.type(item, erase=25)
-                    searched.add(item)
-                elif item in searched and box and time.time() > end - 8:
-                    done[item] = "not in the bag"
-                break
-            y, x = rows[0]
-            if favorited(rgb, texts, y, lay):
-                done[item] = "now" if item in clicked else "already"
-                if item in searched:
-                    box = search_box(texts, split, v)
-                    if box:  # the search box emptied again, for the next one
-                        click_at(*box)
-                        dev.type("", erase=25)
-                continue
-            if item in clicked and time.time() > end - 6:  # clicked, and still not one
-                done[item] = "a right click didn't favorite it"
-                continue
-            trace(f"bag: favoriting {item} (a right click)")
-            click_at(x, y, right=True)
-            clicked.add(item)
-            time.sleep(0.8)
+            rows = sorted(y for t, x, y in texts if norm(t) == norm(item) and x < split)
+            seen[item] = bool(rows) and favorited(rgb, texts, rows[0], lay)
+        if all(seen.values()) or time.time() > end - 5:
             break
-    for item in items:
-        done.setdefault(item, "didn't get to it")
-    return done
+    return {item: seen.get(item, False) for item in items}
 
 
-def item_said(seconds=2.0):
-    """What the game said after an item outside battle ("... HP was restored",
-    "It won't have any effect"), or ""."""
-    end = time.time() + seconds
+def back_to_bag(seconds=8.0):
+    """After an item outside battle: what the game said ("... HP was restored", "It
+    won't have any effect"), clicked away, and the party screen Cancelled if it
+    stays, till the bag's list is back. What it said, or ""."""
+    said, end = "", time.time() + seconds
     while time.time() < end:
         time.sleep(0.4)
-        for t, x, y in screen_texts(grab()):
-            if re.search(r"restored|recovered|effect|healed|was used", t, re.I):
-                return t
-    return ""
+        texts = screen_texts(grab())
+        msg = next(((t, x, y) for t, x, y in texts
+                    if re.search(r"restored|recovered|effect|healed|was used|can't be used", t, re.I)), None)
+        if msg:
+            said = said or msg[0]
+            click_at(msg[1], msg[2])
+            continue
+        party = any(t.lower().startswith(("select a pokemon", "pokemon party")) for t, _, _ in texts)
+        cancel = next(((x, y) for t, x, y in texts if t.lower() == "cancel"), None)
+        if party and cancel and said:
+            click_at(*cancel)
+            continue
+        if any(t.lower() == "close" for t, _, _ in texts) and not party:
+            return said  # the bag again
+    return said
+
+
+def close_bag_only():
+    """The bag's Close (it goes back to the game, not the MENU). True once it's gone."""
+    end = time.time() + 6
+    while time.time() < end:
+        texts = screen_texts(grab())
+        close = next(((x, y) for t, x, y in texts if t.lower() == "close"), None)
+        if not close and any(norm(t) == "menu" for t, _, _ in texts):
+            return True
+        if close:
+            click_at(*close)
+        time.sleep(0.3)
+    return False
 
 
 def debug_workflow(cfg, enc, img, lay):
     """The window's Debug mode (a right click on play), on one encounter: a
     Quick Ball (and Yawn, when the lead is the Yawn user and it wasn't caught),
-    then away; MENU > Bag > Recovers: the heal and PP items favorited if they
-    aren't (a right click), each used once outside battle (the Pokemon Party
-    screen); the bag closed; MENU > Save, its message clicked away. Each step to
+    then away; MENU > Bag > Recovers: the heal and PP items, favorites as you
+    keep them (at the top of the tab), each used once outside battle (the Pokemon
+    Party screen); the bag closed; MENU > Save, its message clicked away. Each step to
     the debug channel, a picture with any that went wrong, a summary at the end."""
     plan = cfg["catch"]
     steps = []
@@ -1852,8 +1872,9 @@ def debug_workflow(cfg, enc, img, lay):
         steps.append((name, ok, detail))
         print(f"  debug: {name}: {'ok' if ok else 'FAILED'}" + (f" ({detail})" if detail else ""), flush=True)
         if not ok:
-            debuglog.debug.shot(f"debug run: {name} went wrong" + (f" ({detail})" if detail else ""),
-                                picture or grab())
+            picture = picture or grab()
+            debuglog.debug.shot(f"debug run: {name} went wrong" + (f" ({detail})" if detail else ""), picture)
+            print(f"    (the screen then: {snapshot(picture, 'debug-run')})", flush=True)
 
     m = re.search(r"should (.+?) do", region_text(img, lay, MSG))
     lead = m.group(1) if m else ""
@@ -1884,33 +1905,34 @@ def debug_workflow(cfg, enc, img, lay):
             step("running", run_away(lay))
     except BattleOver:
         step("the battle", True, "it ended")
-    end = time.time() + 10  # out of the battle for good before the MENU
-    while time.time() < end and find_mute(load_rgb(grab()), lay.mute):
-        time.sleep(0.5)
-
-    # the bag from the MENU: favorites, then each item once
+    # the MENU at once, as the battle goes (no encounter comes while it or the bag is up):
+    # the bag's favorites, an item, its message, the other item; the bag closed, and
+    # straight back to the MENU for Save
     heal, pp = plan["heal_item"], plan["pp_item"]
-    for i, item in enumerate((heal, pp)):
-        opened = open_bag("debug")
-        step(f"MENU > Bag (for the {item})", opened)
-        if not opened:
-            break
-        if i == 0:
-            favorites = favorite_in_bag(lay, "Recovers", (heal, pp))
-            for name, how in favorites.items():
-                step(f"{name} favorited", how in ("already", "now"), how)
-        used = use_item(lay, "Recovers", item, target, in_battle=False)
-        said = item_said() if used else ""
-        step(f"a {item} on {target or '?'}", bool(used), said)
-        close_after_item()  # its message, the bag, the MENU
+    opened = open_bag("debug")
+    step("MENU > Bag", opened)
+    if opened:
+        for name, fav in favorites_in_bag(lay, "Recovers", (heal, pp)).items():
+            step(f"{name} is a favorite", fav, "" if fav else "favorite it in the bag (right click)")
+        for item in (heal, pp):
+            used = use_item(lay, "Recovers", item, target, in_battle=False)
+            said = back_to_bag() if used else ""
+            step(f"a {item} on {target or '?'}", bool(used), said)
+        step("the bag closed", close_bag_only())
 
-    # MENU > Save (after a wait, if the game says to); the message clicked away
-    saved = save_game()
+    # Save, from the MENU (after a wait, if the game says to); its message clicked away.
+    # An encounter in first (the bag's closing lets them come): away from it, and again
+    saved = save_game(wait=6)
+    img, rgb, now = look(lay.mute)
+    if not saved and now:
+        print("  debug: an encounter came before the save: away from it, and saving again", flush=True)
+        run_away(now)
+        saved = save_game(wait=12)
     if not saved and save_wait[0]:
         wait, save_wait[0] = min(save_wait[0] + 2, 125), 0
         print(f"  debug: the game says to wait {wait} s before saving", flush=True)
         time.sleep(wait)
-        saved = save_game()
+        saved = save_game(wait=6)
     step("saving", saved)
     click_at(*lay.pt(*AFK_SPOT))  # the air: nothing left open
 

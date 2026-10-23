@@ -168,17 +168,26 @@ class Desktop:
         """Where the mouse is, to notice you moving it."""
         return _win_cursor() if WINDOWS else tuple(_pyautogui().position())
 
-    def type(self, text, erase=0):
+    def type(self, text, clear=False):
+        """Into the text box that has focus (give it a moment after the click that
+        focused it). clear: whatever's in it goes first (select all, delete), wherever
+        the click left the caret."""
         if WINDOWS:
-            for _ in range(erase):
+            if clear:
+                _win_select_all()
+                time.sleep(0.05)
                 _win_key(0x08)  # backspace
-                time.sleep(0.01)
+                time.sleep(0.05)
             for ch in text:
                 _win_char(ch)
                 time.sleep(0.04)
         else:
             pg = _pyautogui()
-            pg.press("backspace", presses=erase, interval=0.01)
+            if clear:
+                pg.hotkey("command", "a")
+                time.sleep(0.05)
+                pg.press("backspace")
+                time.sleep(0.05)
             pg.typewrite(text, interval=0.04)
 
     def focus_roblox(self):
@@ -343,6 +352,12 @@ def _key(vk=0, scan=0, flags=0):
 def _win_key(vk):
     scan = ctypes.windll.user32.MapVirtualKeyW(vk, 0)
     _send(_key(vk, scan), _key(vk, scan, _KEYUP))
+
+
+def _win_select_all():
+    """Ctrl+A."""
+    ctrl, a = 0x11, 0x41
+    _send(_key(ctrl), _key(a), _key(a, flags=_KEYUP), _key(ctrl, flags=_KEYUP))
 
 
 def _win_char(ch):
