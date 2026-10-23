@@ -1156,18 +1156,25 @@ def find_use_button(rgb, below):
     return best[1:] if best else None
 
 
-def favorited(rgb, texts, y, v):
-    """The bag's row at y is a favorite: its count tag ("x985") is yellow;
-    the others' are light blue."""
-    count = next(((x, ty) for t, x, ty in texts if re.fullmatch(r"x[\d,.]+", t) and abs(ty - y) < 30 * v), None)
-    if not count:
-        return False
-    x, cy = count
-    p = rgb[max(int(cy - 10 * v), 0):int(cy + 10 * v), max(int(x - 110 * v), 0):int(x - 70 * v)]
-    if p.size == 0:
-        return False
-    r, g, b = p[..., 0], p[..., 1], p[..., 2]
-    return bool(((r > 200) & (g > 150) & (b < 150)).mean() > 0.5)
+BAG_TAG = (1320, 1380)  # across: inside a bag row's count tag, left of its "x985"
+
+
+def favorited(rgb, texts, y, lay):
+    """The bag's row at y is a favorite: its count tag is yellow; the others'
+    are light blue. Looked at left of the count ("x985") when that's read,
+    and where the layout puts the tag."""
+    v = lay.s * lay.fit[1]
+    spots = [(lay.pt(BAG_TAG[0], 0)[0], lay.pt(BAG_TAG[1], 0)[0])]
+    count = next((x for t, x, ty in texts if re.fullmatch(r"x[\d,.]+", t) and abs(ty - y) < 30 * v), None)
+    if count is not None:
+        spots.append((count - 110 * v, count - 70 * v))
+    for x0, x1 in spots:
+        p = rgb[max(int(y - 10 * v), 0):max(int(y + 10 * v), 0), max(int(x0), 0):max(int(x1), 0)]
+        if p.size:
+            r, g, b = p[..., 0], p[..., 1], p[..., 2]
+            if ((r > 200) & (g > 150) & (b < 150)).mean() > 0.4:
+                return True
+    return False
 
 
 def region_text(img, lay, box):
@@ -1235,6 +1242,24 @@ def find_tab(texts, want, split, width):
     return float(np.median([x for _, x, _ in in_col])), float(ys.mean() + step * (i - ns.mean()))
 
 
+def plain_row_in_sight(rgb, texts, split, lay):
+    """A row that isn't a favorite is in sight, and no search is narrowing
+    the list: favorites sit at the top, so then all of them are in sight."""
+    empty = any(norm(t).startswith("search") and x > split for t, x, y in texts)
+    return empty and any(re.fullmatch(r"x[\d,.]+", t) and x > split and not favorited(rgb, texts, y, lay)
+                         for t, x, y in texts)
+
+
+def search_box(texts, split, v):
+    """The bag's search box: just under Close, whatever it shows ("Search",
+    "QUICK BALL", a lowercase "full" left in it), never the menu bar's
+    "A ABC" up top."""
+    close = next((y for t, x, y in texts if t.lower() == "close" and x > split), None)
+    return next(((x, y) for t, x, y in sorted(texts, key=lambda t: t[2])
+                 if close is not None and x > split and 40 * v < y - close < 170 * v
+                 and not re.fullmatch(r"x[\d,.]+", t)), None)
+
+
 def use_item(lay, tab, item, target=None, prefer=None, in_battle=True):
     """Bag -> tab -> item -> Use, and -> party member when the item asks for
     one. Favorited items sit at the top of their tab; anything else is
@@ -1249,6 +1274,8 @@ def use_item(lay, tab, item, target=None, prefer=None, in_battle=True):
     split = lay.pt(BAG_SPLIT, 0)[0]
     step, row_y, tab_at, searched = "tab", 0, 0.0, False
     picked_at, picks = 0.0, 0
+    # prefer: looked for on the list first, then searched for; decided once ("done")
+    looking = "look" if prefer and norm(prefer) != norm(item) else "done"
     v = lay.s * lay.fit[1]  # screen px per reference px, down
     texts, img = [], None
     end = time.time() + 12
@@ -1269,11 +1296,38 @@ def use_item(lay, tab, item, target=None, prefer=None, in_battle=True):
                 click_at(*hit)
                 step, tab_at = "item", time.time()
         elif step == "item":
-            if prefer and not searched and norm(prefer) != norm(item):
-                fav = sorted(y for t, x, y in texts if norm(t) == norm(prefer) and x < split)
-                if fav and favorited(load_rgb(img), texts, fav[0], v):
-                    print(f"  {prefer} is a favorite: throwing that instead of the {item}", flush=True)
-                    item = prefer
+            if looking != "done":
+                # favorites are at the top, but more than a screenful hides some: then it's searched for
+                rows = sorted(y for t, x, y in texts if same_word(prefer, t) and x < split)
+                listed = any(re.fullmatch(r"x[\d,.]+", t) for t, _, _ in texts)
+                if rows:
+                    if favorited(load_rgb(img), texts, rows[0], lay):
+                        print(f"  {prefer} is a favorite: throwing that instead of the {item}", flush=True)
+                        item = prefer
+                    elif looking == "searched":
+                        tab_at = time.time()  # the item's search next: the box shows prefer
+                    looking = "done"
+                elif looking == "look" and listed and plain_row_in_sight(load_rgb(img), texts, split, lay):
+                    looking = "done"  # every favorite is in sight above it, and none is prefer
+                    continue
+                elif looking == "look" and listed and time.time() - tab_at > 1.0:
+                    box = search_box(texts, split, v)
+                    if box:
+                        trace(f"bag: looking for a favorited {prefer}")
+                        click_at(*box)
+                        dev.type(prefer, erase=25)
+                        looking, tab_at = "searched", time.time()
+                    else:
+                        looking = "done"
+                    continue
+                elif looking == "searched" and time.time() - tab_at > 2.0:
+                    looking, tab_at = "done", time.time()  # none in the bag
+                elif looking == "look" and time.time() - tab_at > 3.0:
+                    looking = "done"  # no list read: go on without it
+                else:
+                    continue  # the list isn't up yet
+                if looking == "done" and item != prefer:
+                    continue  # the item from the next picture on
             # exact names: "Dive Ball" and "Dream Ball" are one misread apart
             rows = sorted((y, x) for t, x, y in texts if norm(t) == norm(item) and x < split)
             if rows:
@@ -1285,12 +1339,7 @@ def use_item(lay, tab, item, target=None, prefer=None, in_battle=True):
                 move_mouse(*lay.pt(*AFK_SPOT))
                 step, picked_at = "use", time.time()
             elif not searched and time.time() - tab_at > 1.5:
-                # the box sits just under Close: whatever it shows ("Search", "QUICK BALL",
-                # a lowercase "full" left in it), never the menu bar's "A ABC" up top
-                close = next((y for t, x, y in texts if t.lower() == "close" and x > split), None)
-                box = next(((x, y) for t, x, y in sorted(texts, key=lambda t: t[2])
-                            if close is not None and x > split and 40 * v < y - close < 170 * v
-                            and not re.fullmatch(r"x[\d,.]+", t)), None)
+                box = search_box(texts, split, v)
                 if box:  # not a favorite: type it into the tab's search box
                     click_at(*box)
                     dev.type(item, erase=25)
@@ -1429,8 +1478,8 @@ def catching(enc, img, lay, plan, first_ball=True, debug=False, progress=None):
     max_turns = plan["legendary_max_turns" if legendary else "max_turns"]
     balls, turns, drowsy, heals = [], 0, False, 0
     now = enc
-    # the first ball is a Park Ball if one is favorited in the bag (not for practice or tests)
-    park = "Park Ball" if plan.get("park_ball", True) and first_ball and not debug else None
+    # the first ball is a Park Ball whenever one is favorited in the bag
+    park = "Park Ball" if plan.get("park_ball", True) else None
     # A Repeat Ball only helps on species you've caught before (the little
     # Poke Ball icon); anything new gets new_ball instead.
     new = None if enc.get("owned", True) else plan.get("new_ball")
@@ -1444,8 +1493,8 @@ def catching(enc, img, lay, plan, first_ball=True, debug=False, progress=None):
         hp = own_hp(img, lay)
         print(f"  turn {turns + 1}: {lead or 'ours'} at {f'{hp:.0%}' if hp is not None else '? HP'}, "
               f"{now['species']} {now['status'] or 'no status'}" + (", drowsy" if drowsy else ""), flush=True)
-        if turns == 0 and first_ball and (park or plan.get("first_ball")):
-            ball = plan.get("first_ball") or new or plan["awake_ball"]  # unless a Park Ball is favorited
+        if turns == 0 and (park or first_ball and plan.get("first_ball")):
+            ball = (first_ball and plan.get("first_ball")) or new or plan["awake_ball"]  # unless a Park Ball is favorited
         elif hp is not None and hp < plan.get("heal_below", 0.4) and heals < 5:
             trace(f"low HP: {plan['heal_item']}")
             if not use_item(lay, "Recovers", plan["heal_item"], lead):

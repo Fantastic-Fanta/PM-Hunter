@@ -124,6 +124,8 @@ object Ref {
     val MSG = Box(300, 885, 1750, 1020)          // "What should Clodsire do?"
     val PLAYER_BOX = Box(1168, 685, 1680, 870)   // your Pokemon's box, HP "350 / 376"
     const val BAG_SPLIT = 1100.0   // bag rows' names are left of this, the search box right
+    const val BAG_TAG_L = 1320.0   // across: inside a bag row's count tag, left of its "x985"
+    const val BAG_TAG_R = 1380.0
     val AFK_SPOT = Pt(150.0, 800.0)              // margin left of the game
     val CHAT_MARGIN = Box(80, 140, 270, 560)     // margin where chat lines start
     val IDLE_SPOT = Pt(1550.0, 960.0)            // empty right end of the "What should ... do?" box
@@ -239,13 +241,23 @@ object Vision {
 
     /** The bag's row at y is a favorite: its count tag ("x985") is yellow;
      *  the others' are light blue. As pokehunt.py's favorited. */
-    fun favorited(f: Frame, texts: List<TextHit>, y: Double, v: Double): Boolean {
-        val count = texts.firstOrNull {
-            Regex("x[\\d,.]+", RegexOption.IGNORE_CASE).matches(it.text) && abs(it.y - y) < 30 * v
-        } ?: return false
-        val area = Box((count.x - 110 * v).toInt(), (count.y - 10 * v).toInt(), (count.x - 70 * v).toInt(), (count.y + 10 * v).toInt())
-        return f.share(area) { i -> f.r(i) > 200 && f.g(i) > 150 && f.b(i) < 150 } > 0.5
+    fun favorited(f: Frame, texts: List<TextHit>, y: Double, lay: Layout): Boolean {
+        val v = lay.s * lay.cal.ky
+        val spots = mutableListOf(lay.pt(Ref.BAG_TAG_L, 0.0).x to lay.pt(Ref.BAG_TAG_R, 0.0).x)
+        texts.firstOrNull { COUNT.matches(it.text) && abs(it.y - y) < 30 * v }?.let { spots.add(it.x - 110 * v to it.x - 70 * v) }
+        return spots.any { (x0, x1) ->
+            val area = Box(x0.toInt().coerceAtLeast(0), (y - 10 * v).toInt().coerceAtLeast(0), x1.toInt().coerceAtLeast(0), (y + 10 * v).toInt())
+            area.w > 0 && f.share(area) { i -> f.r(i) > 200 && f.g(i) > 150 && f.b(i) < 150 } > 0.4
+        }
     }
+
+    /** A row that isn't a favorite is in sight, and no search is narrowing
+     *  the list: favorites sit at the top, so then all of them are in sight. */
+    fun plainRowInSight(f: Frame, texts: List<TextHit>, split: Double, lay: Layout): Boolean =
+        texts.any { Rules.norm(it.text).startsWith("search") && it.x > split } &&
+            texts.any { COUNT.matches(it.text) && it.x > split && !favorited(f, texts, it.y, lay) }
+
+    private val COUNT = Regex("x[\\d,.]+", RegexOption.IGNORE_CASE)
 
     /** Roblox's chat button: the right end of the dark pill (menu, chat) in
      *  the top-left corner. Roblox opens its chat window when messages come in,

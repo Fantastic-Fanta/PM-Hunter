@@ -489,6 +489,8 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
     private fun useItemIn(lay: Layout, tab: String, wanted: String, target: String?, prefer: String?,
                           inBattle: Boolean): Boolean {
         var item = wanted
+        // prefer: looked for on the list first, then searched for; decided once ("done")
+        var looking = if (prefer != null && Rules.norm(prefer) != Rules.norm(item)) "look" else "done"
         if (inBattle) {
             ensureBattle(lay)
             trace("bag: opening it for $item")
@@ -550,17 +552,6 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
                 // the search box, right of the list's names: typing the item's name
                 // leaves just its row (scrolling for it is the way when that fails)
                 "search" -> if (now() - tabAt > 0.6) {
-                    val fav = prefer?.let { p ->
-                        texts.filter { Rules.norm(it.text) == Rules.norm(p) && it.x < split }.minByOrNull { it.y }
-                    }
-                    if (fav != null && Rules.norm(prefer!!) != Rules.norm(item) && Vision.favorited(img, texts, fav.y, v)) {
-                        Log.print("  $prefer is a favorite: throwing that instead of the $item")
-                        item = prefer
-                        step = "item"  // favorites are at the top of the tab: no search
-                        tabAt = now()
-                        searched = true
-                        continue
-                    }
                     val close = texts.firstOrNull { it.text.equals("close", true) }
                     val count = Regex("x[\\d,.]+", RegexOption.IGNORE_CASE)
                     val rows = texts.filter { count.matches(it.text) }.minOfOrNull { it.y }
@@ -568,6 +559,43 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
                         it.x > split && it !== close && !count.matches(it.text) &&
                             (close == null || it.y > close.y + 20 * v) && (rows == null || it.y < rows - 20 * v)
                     }.minByOrNull { it.y }
+                    if (looking != "done") {
+                        // favorites are at the top, but more than a screenful hides some: then it's searched for
+                        val p = prefer!!
+                        val fav = texts.filter { Rules.sameWord(p, it.text) && it.x < split }.minByOrNull { it.y }
+                        val listed = rows != null
+                        when {
+                            fav != null -> {
+                                looking = "done"
+                                if (Vision.favorited(img, texts, fav.y, lay)) {
+                                    Log.print("  $p is a favorite: throwing that instead of the $item")
+                                    item = p
+                                    step = "item"  // it's on the list: no search
+                                    tabAt = now()
+                                    searched = true
+                                }
+                                continue
+                            }
+                            // every favorite is in sight above a plain row, and none is prefer
+                            looking == "look" && listed && Vision.plainRowInSight(img, texts, split, lay) -> {
+                                looking = "done"
+                                continue
+                            }
+                            looking == "look" && listed && box != null -> {
+                                tap(box)
+                                nap(0.5)
+                                if (phone.typeText(p)) {
+                                    trace("bag: looking for a favorited $p")
+                                    looking = "searched"
+                                } else looking = "done"
+                                tabAt = now()
+                                continue
+                            }
+                            looking == "searched" && now() - tabAt > 2.0 -> looking = "done"  // none in the bag
+                            looking == "look" && now() - tabAt > 3.0 -> looking = "done"  // no list read: go on without it
+                            else -> continue  // the list isn't up yet
+                        }
+                    }
                     if (box != null) {
                         tap(box)
                         nap(0.5)
@@ -818,8 +846,8 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
         var drowsy = false
         var heals = 0
         var cur = enc
-        // the first ball is a Park Ball if one is favorited in the bag (not in debug mode)
-        var park = if (cfg.flag("park_ball") && !debugMode) "Park Ball" else null
+        // the first ball is a Park Ball whenever one is favorited in the bag
+        var park = if (cfg.flag("park_ball")) "Park Ball" else null
         Log.print("  catching ${enc.title()} Lv${enc.level.ifEmpty { "?" }} with ${lead.ifEmpty { "?" }}: up to " +
                   "$maxBalls balls, $maxTurns turns" + if (legendary) " (legendary)" else "")
         while (true) {
