@@ -825,10 +825,11 @@ impl Hunt {
             let r = BIG / 2.0 * (1.0 + 0.9 * out(ring));
             painter.circle_stroke(start, r, Stroke::new(2.0 * (1.0 - ring) + 0.5, PAPER.gamma_multiply(0.45 * (1.0 - ring))));
         }
-        // its shadow, falling away as it flies down
-        let lift = 1.0 - travel;
+        // its shadow, falling away as it flies down: none left when it lands (the pill has
+        // none, and one going all at once reads as the screen brightening)
+        let lift = 1.0 - in_out(travel / 0.85);
         let shadow = egui::Shadow { offset: [0, (14.0 * lift) as i8], blur: (16.0 + 40.0 * lift) as u8, spread: 0,
-                                    color: Color32::from_black_alpha((150.0 * fade * lift + 40.0 * travel) as u8) };
+                                    color: Color32::from_black_alpha((150.0 * fade * lift).round() as u8) };
         painter.add(shadow.as_shape(rect, d / 2.0));
         painter.circle_filled(center, d / 2.0, gray(0x3a).gamma_multiply(fade)); // its hairline
         painter.circle_filled(center, d / 2.0 - 1.0, INK.gamma_multiply(fade));
