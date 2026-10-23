@@ -40,12 +40,12 @@ ssh_ "set -e
   systemctl restart poopihunt-api
   sleep 1
   systemctl is-active poopihunt-api"
-# the download page, filled in with the build that's up (publish-android.sh does the same)
-v=$(ssh_ "cat $BASE/public/version.json")
-name=$(echo "$v" | python3 -c "import json, sys; print(json.load(sys.stdin)['versionName'])")
-apk=$(echo "$v" | python3 -c "import json, sys; print(json.load(sys.stdin)['apk'])")
-page=$(mktemp)
-sed "s/BUILD/$name/; s/APKFILE/$apk/" site/index.html > $page
+# the download page, filled in with the build that's up (publish-android.sh and publish-windows.sh do the same)
+got=$(mktemp -d)
+ssh_ "cat $BASE/public/version.json" > $got/version.json
+ssh_ "cat $BASE/public/windows.json 2>/dev/null" > $got/windows.json || true
+page=$got/index.html
+python3 site/fill_page.py $got/version.json $got/windows.json > $page
 scp -q -i $KEY $page $SERVER:$BASE/public/index.html
 ssh_ "chown poopihunt:poopihunt $BASE/public/index.html && chmod 644 $BASE/public/index.html"
 echo "published on https://poopihunt.xyz/app"

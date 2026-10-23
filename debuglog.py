@@ -9,6 +9,7 @@ about 30 messages a minute per webhook.
 import atexit
 import io
 import json
+import os
 import platform
 import sys
 import threading
@@ -22,6 +23,8 @@ import uuid
 # isn't in the repository: make-windows-zip.sh puts it in from secrets.json.
 HOOK = "__WINDOWS_DEBUG_WEBHOOK__"
 URL = {"win32": HOOK}.get(sys.platform, "") if HOOK.startswith("https://") else ""
+if os.environ.get("HUNT_DEBUG") == "0":  # Hunt's window: "Send problem reports" is off
+    URL = ""
 SHOTS = 25          # screenshots per run at most (besides crashes)
 CLICK_SHOTS = 10    # the first clicks get a close-up each
 

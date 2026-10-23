@@ -54,18 +54,23 @@ if __name__ == "__main__":
 
 import numpy as np
 from PIL import Image
-from scipy import ndimage
 
 import devices
 import remote
 from devices import ocr, sound
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEBUG_DIR = os.path.join(HERE, "debug")
-FINDS_DIR = os.path.join(HERE, "finds")
-LOG = os.path.join(HERE, "encounters.csv")
-CAL_FILE = os.path.join(HERE, "calibration.json")
-KEY_FILE = os.path.join(HERE, "website.key")  # this computer's secret for poopihunt.xyz
+DATA = os.environ.get("HUNT_DATA") or HERE  # what a run keeps: Hunt.exe's are in %LOCALAPPDATA%\Hunt
+DEBUG_DIR = os.path.join(DATA, "debug")
+FINDS_DIR = os.path.join(DATA, "finds")
+LOG = os.path.join(DATA, "encounters.csv")
+CAL_FILE = os.path.join(DATA, "calibration.json")
+KEY_FILE = os.path.join(DATA, "website.key")  # this computer's secret for poopihunt.xyz
+try:
+    from build_info import NAME as BUILD  # Hunt.exe's build, written by the Windows build
+except ImportError:
+    BUILD = time.strftime("%d %b %H:%M", time.localtime(os.path.getmtime(__file__)))
+WINDOW = False  # run by Hunt's window (app.py), --window
 dev = devices.Desktop()
 FIELDS = ("species", "shiny", "tint", "reskin", "gradient")
 
@@ -132,6 +137,52 @@ def load_rgb(img):
     return np.asarray(img.convert("RGB")).astype(np.int16)
 
 
+def blobs(mask):
+    """The blobs of a True/False mask (pixels touching sideways or up and
+    down, like scipy's label): [(row slice, column slice, pixels)], in the
+    order a row by row scan meets them. Rows are cut into runs of True, and
+    runs that overlap in neighboring rows are joined."""
+    h, w = mask.shape
+    padded = np.zeros((h, w + 2), np.int8)
+    padded[:, 1:-1] = mask
+    step = np.diff(padded, axis=1)
+    row, start = np.nonzero(step == 1)
+    end = np.nonzero(step == -1)[1]
+    n = len(row)
+    if not n:
+        return []
+    # the runs of the row above that overlap each run: a stretch [lo, hi)
+    above = (row - 1) * (w + 1)
+    lo = np.searchsorted(row * (w + 1) + end, above + start, "right")
+    hi = np.searchsorted(row * (w + 1) + start, above + end, "left")
+    count = np.clip(hi - lo, 0, None)
+    a = np.repeat(np.arange(n), count)
+    b = np.repeat(lo, count) + np.arange(count.sum()) - np.repeat(np.cumsum(count) - count, count)
+    # each run points at its blob's first run: joined until every pair agrees
+    first = np.arange(n)
+    while True:
+        while True:
+            up = first[first]
+            if (up == first).all():
+                break
+            first = up
+        if (first[a] == first[b]).all():
+            break
+        lower = np.minimum(first[a], first[b])
+        np.minimum.at(first, first[a], lower)
+        np.minimum.at(first, first[b], lower)
+    _, blob = np.unique(first, return_inverse=True)
+    k = blob.max() + 1
+    y0, x0 = np.full(k, h), np.full(k, w)
+    y1, x1 = np.zeros(k, int), np.zeros(k, int)
+    np.minimum.at(y0, blob, row)
+    np.maximum.at(y1, blob, row + 1)
+    np.minimum.at(x0, blob, start)
+    np.maximum.at(x1, blob, end)
+    size = np.bincount(blob, end - start)
+    return [(slice(int(y0[i]), int(y1[i])), slice(int(x0[i]), int(x1[i])), int(size[i])) for i in range(k)]
+
+
 def red_mask(rgb):
     r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
     return (r > 150) & (g < 50) & (b < 50)
@@ -155,8 +206,7 @@ def find_mute(rgb, hint=None):
     known spot first, which is much cheaper than searching the whole screen."""
     if hint and is_mute(rgb, hint):
         return hint
-    labels, _ = ndimage.label(red_mask(rgb))
-    for sl in ndimage.find_objects(labels):
+    for sl in blobs(red_mask(rgb)):
         box = (sl[1].start, sl[0].start, sl[1].stop, sl[0].stop)
         if is_mute(rgb, box):
             return box
@@ -287,11 +337,11 @@ def find_block(rgb, lay, ref, color):
         return None
     for tol in (20, 35):
         mask = (np.abs(p - color) < tol).all(axis=2)
-        labels, n = ndimage.label(mask)
-        if not n:
+        found = blobs(mask)
+        if not found:
             continue
-        sizes = ndimage.sum(mask, labels, range(1, n + 1))
-        sl = ndimage.find_objects(labels)[int(np.argmax(sizes))]
+        sizes = np.array([size for _, _, size in found])
+        sl = found[int(np.argmax(sizes))]
         h, w = sl[0].stop - sl[0].start, sl[1].stop - sl[1].start
         if (0.6 < w / ((ref[2] - ref[0]) * lay.s) < 1.6 and 0.6 < h / ((ref[3] - ref[1]) * lay.s) < 1.6
                 and sizes.max() > 0.5 * w * h):
@@ -655,6 +705,27 @@ web = remote.Web()
 
 def publish():
     web.publish(running.is_set(), _cfg)
+    if WINDOW:
+        enc = web.enc
+        remote.show("@state " + json.dumps({
+            "running": running.is_set(), "remote": web.remote, "count": web.encounters,
+            "phase": web.phase, "wanted": web.wanted, "enc": title(enc) if enc else ""}))
+
+
+def window_buttons():
+    """Hunt's window sends its buttons as lines: toggle, code, logout. When it
+    closes the line ends (or it just closes it to stop), and so does the hunt."""
+    def read():
+        for line in sys.stdin:
+            cmd = line.strip()
+            if cmd == "toggle":
+                toggle()
+            elif cmd in ("code", "logout"):
+                website_key(devices.N_KEYCODE if cmd == "code" else devices.L_KEYCODE)
+        import _thread
+        _thread.interrupt_main()
+
+    threading.Thread(target=read, daemon=True).start()
 
 
 def from_website(cmd):
@@ -1021,9 +1092,8 @@ def screen_texts(img):
 def find_use_button(rgb, below):
     """Center of the bright green Use button under the backpack."""
     r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
-    labels, _ = ndimage.label((g > 200) & (r < 170) & (b < 170))
     best = None
-    for sl in ndimage.find_objects(labels):
+    for sl in blobs((g > 200) & (r < 170) & (b < 170)):
         h, w = sl[0].stop - sl[0].start, sl[1].stop - sl[1].start
         if h > 8 and 3 < w / h < 12 and sl[0].start > below and (best is None or w * h > best[0]):
             best = (w * h, (sl[1].start + sl[1].stop) / 2, (sl[0].start + sl[0].stop) / 2)
@@ -1658,8 +1728,7 @@ def link_website():
         return
     if not isinstance(sys.stdout, remote.Lines):
         sys.stdout = remote.Lines(sys.stdout, web)
-    build = time.strftime("%d %b %H:%M", time.localtime(os.path.getmtime(__file__)))
-    web.link = remote.Remote(remote.key(KEY_FILE), build, from_website, os.environ.get("HUNT_SITE", remote.SITE))
+    web.link = remote.Remote(remote.key(KEY_FILE), BUILD, from_website, os.environ.get("HUNT_SITE", remote.SITE))
     web.link.start()
     import atexit
     atexit.register(web.link.stop)
@@ -1682,7 +1751,7 @@ def system_info():
     import platform
     from importlib import metadata
     versions = []
-    for p in ("numpy", "pillow", "scipy", "mss", "pyautogui", "pynput", "winrt-runtime", "pyobjc-framework-Vision"):
+    for p in ("numpy", "pillow", "mss", "pyautogui", "pynput", "winrt-runtime", "pyobjc-framework-Vision"):
         try:
             versions.append(f"{p} {metadata.version(p)}")
         except metadata.PackageNotFoundError:
@@ -1815,8 +1884,11 @@ def main():
     ap.add_argument("--test-discord", action="store_true", help="send a test message")
     ap.add_argument("--diagnose", action="store_true",
                     help="check reading, the screen and the mouse on this PC, no clicks")
-    ap.add_argument("--config", default=os.path.join(HERE, "config.json"))
+    ap.add_argument("--config", default=os.path.join(DATA, "config.json"))
+    ap.add_argument("--window", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args()
+    global WINDOW
+    WINDOW = args.window
     cfg = load_config(args.config)
     url = cfg.get("debug_webhook", debuglog.URL)
     if url and not debuglog.debug.url:
@@ -1836,6 +1908,8 @@ def main():
             read_image(path, cfg, args.calibrate)
         return
     start_hotkey()
+    if WINDOW:
+        window_buttons()
     while True:  # unattended: an unexpected error restarts the hunt, never ends it
         try:
             hunt(cfg, args)

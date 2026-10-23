@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="/app/icon-180.png">
 <style>
   /* the battle page's look (app/index.html): a Gen 3 screen of 240 x 160 pixels, zoomed to fit.
-     The publish scripts fill in the build and the APK's file name. */
+     site/fill_page.py fills in the builds and their file names. */
   @font-face { font-family: "Gen3"; src: url(/app/fonts/gen3.woff2) format("woff2"); font-display: block; }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
@@ -21,7 +21,7 @@
   .bg::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 16px;
                 background: linear-gradient(180deg, #deffd5 0 1px, #b4e694 1px 4px, #deffd5 4px 5px, #bdeea4 5px 8px,
                                             #deffd5 8px 9px, #c5eebd 9px 12px, #deffd5 12px 13px, #cdf6c5 13px 16px); }
-  .win { position: absolute; left: 24px; top: 16px; width: 192px; height: 84px; background: #fff; border-radius: 3px;
+  .win { position: absolute; left: 24px; top: 10px; width: 192px; height: 96px; background: #fff; border-radius: 3px;
          color: #484858; text-shadow: 1px 0 #d0d0c8, 0 1px #d0d0c8, 1px 1px #d0d0c8;
          box-shadow: inset 0 0 0 1px #4a4152, inset 0 0 0 2px #293131, inset 0 0 0 3px #6a8bbd,
                      inset 0 0 0 5px #6a5a73, inset 0 0 0 6px #ded5de; }
@@ -43,9 +43,11 @@
   <div class="bg"></div>
   <div class="win">
     <h1>POOPIHUNT</h1>
-    <a href="APKFILE" download class="on" style="top:38px" data-say="For your phone: Android 11
+    <a href="APKFILE" download class="on" style="top:32px" data-say="For your phone: Android 11
 or newer. Build BUILD."><i></i>DOWNLOAD FOR ANDROID</a>
-    <a href="/app/" style="top:56px" data-say="Watch and battle from
+    <a href="WINDOWS_FILE" download style="top:50px" data-say="For your PC: Windows 10 or 11.
+Build WINDOWS_BUILD."><i></i>DOWNLOAD FOR WINDOWS</a>
+    <a href="/app/" style="top:68px" data-say="Watch and battle from
 this browser."><i></i>PLAY ON THE WEB</a>
   </div>
   <div class="msgbox"><div class="msgframe"><div class="msgtext" id="say"></div></div></div>

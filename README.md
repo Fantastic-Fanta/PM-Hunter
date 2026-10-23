@@ -19,20 +19,40 @@ Double-click `pokehunt.command`. Ctrl+Shift+H pauses and resumes.
 
 ## Windows
 
-`./make-windows-zip.sh` packs a test build into `~/Downloads/pokehunt-windows.zip`
-(without your Discord webhook). On the PC: install Python from python.org
-(tick "Add python.exe to PATH"), unzip, then double-click **1 Check** (reads the
-samples, looks at the screen, moves the mouse a little, clicks nothing),
-**2 Watch only**, and finally **3 Hunt**. The first run sets itself up.
+**Hunt for Windows** is `HuntSetup.exe` on https://poopihunt.xyz: download,
+open it, and Hunt is in the Start menu and on the desktop (no admin, no
+Python). Windows warns about it at first ("Windows protected your PC": **More
+info > Run anyway**) because the installer isn't signed.
 
-Everything a Windows run prints, its errors, and screenshots of calibration,
-trouble, finds and the first 10 clicks go to the Windows debug channel
-(`debuglog.py`; `"debug_webhook"` in config.json changes it, `""` turns it off).
-Setup failures are uploaded by the launcher.
+The window (`app.py`, Hunt.exe) has **Start hunting** / **Pause** / **Stop**,
+**Watch only**, the website code, **What to hunt** (config.json, checked
+before it's saved, with the Discord webhook in a box of its own), **Finds**,
+and under **More**: Check this PC, Test catching, fit the layout again, and
+**Send problem reports**. The hunter itself is pokehunt.py
+(hunt-engine.exe), run by the window with `--window`. What a PC keeps
+(config.json, finds, calibration, the website key) is in `%LOCALAPPDATA%\Hunt`.
+Hunt checks https://poopihunt.xyz/windows.json when it starts (and every 6
+hours) and offers **Update now**, which installs the new build and restarts.
+
+`./publish-windows.sh` builds it on GitHub (`.github/workflows/windows.yml`:
+PyInstaller with `windows/hunt.spec`, Inno Setup with `windows/hunt.iss`,
+Python 3.12) and publishes it; GitHub builds what's pushed, so push first.
+The build also reads the samples with Windows' OCR (the "read like on the
+Mac" line). Pushes build it too, as a check. On a Mac, `python app.py` opens
+the same window.
+
+Published builds report what they print, their errors, and screenshots of
+calibration, trouble, finds and the first 10 clicks to the Windows debug
+channel (`debuglog.py`; the address is the repository's
+`WINDOWS_DEBUG_WEBHOOK` secret, `"debug_webhook"` in config.json changes it,
+`""` turns it off, so does **Send problem reports**).
 
 Clicks go through Windows' `SendInput` with small relative mouse moves, the way
 a real mouse reaches Roblox. Text is read with Windows' own OCR. Keep Roblox on
 the main screen.
+
+The older test zip (`./make-windows-zip.sh`, needs Python on the PC, then
+**1 Check**, **2 Watch only**, **3 Hunt**) still works.
 
 ## Android (just the phone, no computer)
 

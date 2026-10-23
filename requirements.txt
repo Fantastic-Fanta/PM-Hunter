@@ -1,6 +1,5 @@
 numpy
 pillow
-scipy
 mss
 pyautogui
 pynput

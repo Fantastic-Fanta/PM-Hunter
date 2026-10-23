@@ -24,3 +24,8 @@ android/app/build/
 android/local.properties
 .claude/
 .DS_Store
+
+# the Windows build (made on GitHub)
+build_info.py
+build/
+dist/
