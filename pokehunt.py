@@ -287,6 +287,9 @@ def read_enemy(img, rgb, lay):
         elif cy >= end:
             enc["gradient"] = (enc["gradient"] + " " + text.strip()).strip()
 
+    if devices.WINDOWS:  # its OCR misses these two in the whole box: each is read on its own
+        for field, row, ways in (("reskin", RESKIN_ROW, ("x2", "far")), ("gradient", GRADIENT_TAB, ("sat", "far"))):
+            enc[field] = row_text(img, lay, row, ways) or enc[field]
     # the gender sign can come as a text of its own ("Sentret" "O"): cleaned once more, joined
     enc["species"] = clean_name(enc["species"])
     p = lay.patch(rgb, ICONS)
@@ -297,6 +300,38 @@ def read_enemy(img, rgb, lay):
     r, g, b = p[..., 0], p[..., 1], p[..., 2]
     enc["owned"] = bool(((r > 170) & (g < 90) & (b < 90)).mean() > 0.01)
     return enc
+
+
+RESKIN_ROW = (BOX[0] + 40, HP_BAR_END, BOX[2] - 20, BOX_END)    # INFERNO, under the HP bar
+GRADIENT_TAB = (BOX[0] + 60, BOX_END, BOX[2] - 60, BOX[3])      # Mirage, in many colors
+
+
+def row_text(img, lay, ref, ways):
+    """Windows' OCR on one row of the enemy's box, cut out and prepared each
+    way in turn (tried on the samples on Windows): the longest reading, since
+    the colored letters come back partly ("Mira" for Mirage).
+      x2   twice the size
+      far  what isn't the row's background, black on white, 3x
+      sat  what's strongly colored, black on white, 3x"""
+    crop = img.crop(lay.box(ref)).convert("RGB")
+    if lay.s < 1:
+        crop = crop.resize((int(crop.width / lay.s), int(crop.height / lay.s)), Image.LANCZOS)
+    a = np.asarray(crop).astype(np.int16)
+    bg = np.median(a.reshape(-1, 3), axis=0)
+    best = ""
+    for way in ways:
+        if way == "x2":
+            prep, k, fill = crop, 2, tuple(int(c) for c in bg)
+        else:
+            ink = (np.abs(a - bg).max(axis=2) > 40 if way == "far" else a.max(axis=2) - a.min(axis=2) > 50)
+            prep, k, fill = Image.fromarray(np.where(ink, 0, 255).astype(np.uint8)).convert("RGB"), 3, (255, 255, 255)
+        prep = prep.resize((prep.width * k, prep.height * k), Image.LANCZOS)
+        framed = Image.new("RGB", (prep.width + 40, prep.height + 40), fill)
+        framed.paste(prep, (20, 20))
+        text = " ".join(t.strip() for t, _, _ in ocr(framed)).strip(" .")
+        if re.search("[A-Za-z]{2}", text) and len(text) > len(best):
+            best = text
+    return best
 
 
 def describe(enc):
@@ -1892,6 +1927,7 @@ def main():
     args = ap.parse_args()
     global WINDOW
     WINDOW = args.window
+    os.makedirs(DATA, exist_ok=True)
     cfg = load_config(args.config)
     url = cfg.get("debug_webhook", debuglog.URL)
     if url and not debuglog.debug.url:
