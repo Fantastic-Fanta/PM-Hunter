@@ -40,9 +40,10 @@ const INSET: f32 = (H - CONTROL) / 2.0; // the same room all round the pill's en
 const TEXT: f32 = 13.0; // the words' size (a whole number draws crisper)
 
 // the opening: a big Clodsire mid-screen, then it shrinks into the pill's end
-const BIG: f32 = 150.0; // its size, at first
-const INTRO_MOVE: f32 = 0.8; // s: when it sets off (it's come in by then)
-const INTRO_END: f32 = 1.45; // s: when it's the pill's end, play in it
+const BIG: f32 = 160.0; // its size, at first
+const INTRO_MOVE: f32 = 1.55; // s: when it sets off (it's come in and breathed by then)
+const INTRO_LAND: f32 = 2.35; // s: when it's the pill's end, play in it
+const INTRO_END: f32 = 2.65; // s: the landing's ripple gone, the window back over the pill
 
 const INK: Color32 = Color32::from_rgb(0x11, 0x11, 0x11);
 const PAPER: Color32 = Color32::WHITE;
@@ -758,6 +759,10 @@ impl Hunt {
         }
     }
 
+    /// The opening, in the window over the screen: the screen dims, Clodsire's
+    /// circle springs up in the middle with a ripple of light, breathes, then
+    /// sweeps along an arc down into the pill's end as the screen comes back,
+    /// turning into play as it lands.
     fn draw_intro(&self, ui: &mut egui::Ui, t: f32, origin: Pos2) {
         let ctx = ui.ctx().clone();
         ctx.request_repaint();
@@ -765,29 +770,55 @@ impl Hunt {
         let origin = ctx.input(|i| i.viewport().outer_rect).map(|o| o.min).unwrap_or(origin);
         let painter = ui.painter().clone();
         let screen = self.monitor(&ctx);
-        let ease_out = |x: f32| 1.0 - (1.0 - x.clamp(0.0, 1.0)).powi(3);
-        let ease = |x: f32| {
-            let x = x.clamp(0.0, 1.0);
+        let clamp = |x: f32| x.clamp(0.0, 1.0);
+        let out = |x: f32| 1.0 - (1.0 - clamp(x)).powi(3);
+        let in_out = |x: f32| {
+            let x = clamp(x);
             if x < 0.5 { 4.0 * x * x * x } else { 1.0 - (-2.0 * x + 2.0).powi(3) / 2.0 }
         };
-        let appear = ease_out(t / 0.4);
-        let travel = ease((t - INTRO_MOVE) / (INTRO_END - INTRO_MOVE));
+        let spring = |x: f32| {
+            // past it a little, and back (ease out back)
+            let (x, c) = (clamp(x) - 1.0, 1.70158);
+            1.0 + (c + 1.0) * x * x * x + c * x * x
+        };
+        let travel = in_out((t - INTRO_MOVE) / (INTRO_LAND - INTRO_MOVE));
+        let landed = clamp((t - INTRO_LAND) / (INTRO_END - INTRO_LAND));
+
+        // the veil: the screen dims while Clodsire's there
+        let veil = out(t / 0.5) * (1.0 - in_out((t - INTRO_MOVE) / 0.6));
+        let whole = Rect::from_min_size(Pos2::ZERO - origin.to_vec2(), screen);
+        painter.rect_filled(whole, 0.0, Color32::from_black_alpha((110.0 * veil) as u8));
+
+        // the path: from the middle, along an arc, to the pill's end
         let start = pos2(screen.x / 2.0, screen.y / 2.0) - origin.to_vec2();
         let end = self.pos.unwrap_or(Pos2::ZERO) - origin.to_vec2() + vec2(H / 2.0, H / 2.0);
-        let center = start + (end - start) * travel;
-        let d = BIG * (0.85 + 0.15 * appear) * (1.0 - travel) + H * travel;
+        let bend = start + (end - start) * 0.5 + vec2(0.0, -0.25 * (end - start).length().max(120.0));
+        let center = start + (bend - start) * (2.0 * (1.0 - travel) * travel)
+            + (end - start) * (travel * travel);
+        let breath = 1.0 + 0.025 * (((t - 0.7) * 3.2).sin()) * clamp((t - 0.7) / 0.3) * (1.0 - travel);
+        let arrive = spring((t - 0.1) / 0.75);
+        let d = (BIG * (0.6 + 0.4 * arrive) * breath) * (1.0 - travel) + H * travel;
+        let fade = out((t - 0.05) / 0.35);
         let rect = Rect::from_center_size(center, Vec2::splat(d));
 
-        let shadow = egui::Shadow { offset: [0, 10], blur: 40, spread: 0,
-                                    color: Color32::from_black_alpha((120.0 * appear * (1.0 - travel)) as u8) };
+        // its ripple of light, once it's up
+        let ring = clamp((t - 0.45) / 0.8);
+        if ring > 0.0 && ring < 1.0 {
+            let r = BIG / 2.0 * (1.0 + 0.9 * out(ring));
+            painter.circle_stroke(start, r, Stroke::new(2.0 * (1.0 - ring) + 0.5, PAPER.gamma_multiply(0.45 * (1.0 - ring))));
+        }
+        // its shadow, falling away as it flies down
+        let lift = 1.0 - travel;
+        let shadow = egui::Shadow { offset: [0, (14.0 * lift) as i8], blur: (16.0 + 40.0 * lift) as u8, spread: 0,
+                                    color: Color32::from_black_alpha((150.0 * fade * lift + 40.0 * travel) as u8) };
         painter.add(shadow.as_shape(rect, d / 2.0));
-        painter.circle_filled(center, d / 2.0, gray(0x3a).gamma_multiply(appear)); // its hairline
-        painter.circle_filled(center, d / 2.0 - 1.0, INK.gamma_multiply(appear));
+        painter.circle_filled(center, d / 2.0, gray(0x3a).gamma_multiply(fade)); // its hairline
+        painter.circle_filled(center, d / 2.0 - 1.0, INK.gamma_multiply(fade));
         // Clodsire, giving way to the play button as it lands
-        let morph = ease((travel - 0.55) / 0.45);
+        let morph = in_out((travel - 0.6) / 0.4);
         if morph < 1.0 {
             egui::Image::new(egui::include_image!("../../windows/hunt-icon.png"))
-                .tint(Color32::WHITE.gamma_multiply(appear * (1.0 - morph)))
+                .tint(Color32::WHITE.gamma_multiply(fade * (1.0 - morph)))
                 .paint_at(ui, rect);
         }
         if morph > 0.0 {
@@ -796,6 +827,11 @@ impl Hunt {
             let s = r / (CONTROL / 2.0);
             let pts = [vec2(-3.0, -5.0), vec2(-3.0, 5.0), vec2(5.5, 0.0)].map(|v| center + v * s).to_vec();
             painter.add(egui::Shape::convex_polygon(pts, INK.gamma_multiply(morph), Stroke::NONE));
+        }
+        // and a small ripple where it touches down
+        if landed > 0.0 && landed < 1.0 {
+            painter.circle_stroke(end, H / 2.0 + 14.0 * out(landed),
+                                  Stroke::new(1.5_f32, PAPER.gamma_multiply(0.5 * (1.0 - landed))));
         }
     }
 
@@ -810,7 +846,11 @@ impl Hunt {
         // opening (after the big Clodsire): it stretches out from play, the rest fades in
         let t = self.born.get_or_insert_with(Instant::now).elapsed().as_secs_f32();
         let ease = |x: f32| 1.0 - (1.0 - x.clamp(0.0, 1.0)).powi(3);
-        let (grow, reveal) = (ease(t / 0.5), ease((t - 0.25) / 0.35));
+        let spring = |x: f32| {
+            let (x, c) = (x.clamp(0.0, 1.0) - 1.0, 1.2);
+            1.0 + (c + 1.0) * x * x * x + c * x * x
+        };
+        let (grow, reveal) = (spring(t / 0.55).min(1.0), ease((t - 0.3) / 0.45));
         if reveal < 1.0 {
             ctx.request_repaint();
         }
@@ -857,10 +897,14 @@ impl Hunt {
             return;
         }
         ui.set_opacity(reveal);
-        let painter = ui.painter().clone();
+        let mut painter = ui.painter().clone();
+        let slide = (1.0 - reveal) * 10.0; // what's in it slides in from the left as it comes
+        if slide > 0.0 {
+            painter.set_clip_rect(shape.shrink(1.0));
+        }
 
         // the website code (or a word: Done, Stopped, an update's progress), which opens the website
-        let left = main.x + CONTROL / 2.0 + 12.0;
+        let left = main.x + CONTROL / 2.0 + 12.0 - slide;
         let words = self.code_text();
         let shown = words.clone(); // nothing, for the moment it takes to connect
         let is_code = !self.code.is_empty() && shown == self.code;
