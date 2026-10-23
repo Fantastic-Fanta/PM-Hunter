@@ -1,6 +1,6 @@
-//! Hunt's window (Hunt.exe): one pill with no frame. Start / stop, the website
-//! code, a box for the Discord webhook, and three round buttons: Debug mode
-//! (a bug), Hunt's folder, quit. Updates install themselves while it isn't
+//! Hunt's window (Hunt.exe): one pill with no frame. Start / stop (a right
+//! click: Debug mode), the website code, a box for the Discord webhook, and two
+//! round buttons: Hunt's folder, quit. Updates install themselves while it isn't
 //! hunting.
 //!
 //! The hunter itself is pokehunt.py (hunt-engine.exe, next to Hunt.exe), run
@@ -33,7 +33,7 @@ const NAME: &str = match option_env!("HUNT_NAME") {
     Some(name) => name,
     None => "dev",
 };
-const W: f32 = 360.0; // the pill
+const W: f32 = 340.0; // the pill
 const H: f32 = 40.0;
 const CONTROL: f32 = 26.0; // every button and box is this tall
 const INSET: f32 = (H - CONTROL) / 2.0; // the same room all round the pill's ends
@@ -307,7 +307,7 @@ impl Hunt {
             _ => vec![],
         }.into_iter().map(String::from));
         if self.test {
-            cmd.extend(["--practice".into(), "1".into()]);
+            cmd.extend(["--practice".into(), "1".into(), "--calibrate".into()]); // Debug mode, from the start
         }
         cmd.extend(["--window".into(), "--config".into(), self.paths.config.to_string_lossy().into()]);
         let mut command = Command::new(&cmd[0]);
@@ -552,10 +552,29 @@ impl Hunt {
         self.restart();
     }
 
-    fn flip_test(&mut self) {
-        self.test = !self.test;
-        let cmd = if self.test { "test on" } else { "test off" };
-        self.send(cmd);
+    /// Debug mode (a right click on play): it hunts at once, fits the layout
+    /// again at the next encounter (drawn for the developer), catches that one
+    /// with a screenshot every turn and saves, then turns itself off and hunts
+    /// on. A right click while it's on calls it off.
+    fn debug_run(&mut self) {
+        if env::var_os("HUNT_PREVIEW").is_some() {
+            self.test = !self.test; // a look at the window: the ring, but its hunter stays paused
+            return;
+        }
+        if self.test {
+            self.test = false;
+            self.send("test off");
+            return;
+        }
+        self.test = true;
+        if !self.running() {
+            self.start(Self::hunt_mode(), false);
+            return;
+        }
+        self.send("test on");
+        if !self.hunting() {
+            self.send("toggle");
+        }
     }
 
     // ------------------------------------------------------------ updates
@@ -706,10 +725,16 @@ impl Hunt {
         }
         let cy = H / 2.0;
 
-        // start / stop
+        // start / stop; a right click turns Debug mode on, and a ring round it says so
         let main = pos2(INSET + CONTROL / 2.0, cy);
         let resp = ui.interact(Rect::from_center_size(main, Vec2::splat(CONTROL)), Id::new("main"), Sense::click());
+        if self.test {
+            painter.circle_stroke(main, CONTROL / 2.0 + 3.5, Stroke::new(1.5_f32, c.ink));
+        }
         painter.circle_filled(main, CONTROL / 2.0, if resp.hovered() { c.dim } else { c.ink });
+        if resp.secondary_clicked() {
+            self.debug_run();
+        }
         if self.shows_play() {
             let pts = vec![main + vec2(-3.0, -5.0), main + vec2(-3.0, 5.0), main + vec2(5.5, 0.0)];
             painter.add(egui::Shape::convex_polygon(pts, c.fill, Stroke::NONE));
@@ -742,19 +767,16 @@ impl Hunt {
             open_path(&format!("{}/app", site()));
         }
 
-        // from the right end: quit, Hunt's folder, Debug mode
+        // from the right end: quit, Hunt's folder
         let gap = 6.0;
         let quit = pos2(W - INSET - CONTROL / 2.0, cy);
         let folder = quit - vec2(CONTROL + gap, 0.0);
-        let bug = folder - vec2(CONTROL + gap, 0.0);
-        for (id, at) in [("test", bug), ("folder", folder), ("quit", quit)] {
+        for (id, at) in [("folder", folder), ("quit", quit)] {
             let resp = ui.interact(Rect::from_center_size(at, Vec2::splat(CONTROL)), Id::new(id), Sense::click());
-            let on = id == "test" && self.test; // Debug mode: white while it's on
             let hovered = resp.hovered();
-            painter.circle_filled(at, CONTROL / 2.0, if on { c.ink } else if hovered { c.hover } else { c.boxed });
-            let tint = if on { c.fill } else if hovered { c.ink } else if light { gray(0x55) } else { gray(0xb4) };
+            painter.circle_filled(at, CONTROL / 2.0, if hovered { c.hover } else { c.boxed });
+            let tint = if hovered { c.ink } else if light { gray(0x55) } else { gray(0xb4) };
             let icon = match id {
-                "test" => egui::include_image!("../icons/bug.svg"),
                 "folder" => egui::include_image!("../icons/folder.svg"),
                 _ => egui::include_image!("../icons/x.svg"),
             };
@@ -762,7 +784,6 @@ impl Hunt {
             egui::Image::new(icon).tint(tint).paint_at(ui, Rect::from_center_size(at, Vec2::splat(size)));
             if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
                 match id {
-                    "test" => self.flip_test(),
                     "folder" => open_path(&self.paths.data.to_string_lossy()),
                     _ => self.quit(&ctx),
                 }
@@ -771,7 +792,7 @@ impl Hunt {
 
         // the webhook box, between
         let hook_box = Rect::from_min_max(pos2(left + 70.0, cy - CONTROL / 2.0),
-                                          pos2(bug.x - CONTROL / 2.0 - 8.0, cy + CONTROL / 2.0));
+                                          pos2(folder.x - CONTROL / 2.0 - 8.0, cy + CONTROL / 2.0));
         painter.rect_filled(hook_box, CONTROL / 2.0, c.boxed);
         let inner = hook_box.shrink2(vec2(11.0, 2.0));
         let text_font = FontId::proportional(TEXT);
@@ -956,7 +977,15 @@ impl Smoke {
                     self.errors.push("the webhook didn't clear".into());
                 }
             }
-            5 => { h.flip_test(); h.flip_test(); }
+            5 => {
+                h.fake = true;
+                h.debug_run();
+                if !h.test {
+                    self.errors.push("Debug mode didn't come on".into());
+                }
+                h.debug_run();
+                h.fake = false;
+            }
             6 => {} // for the build's picture
             7 => {
                 let outer = ctx.input(|i| i.viewport().outer_rect).unwrap_or(Rect::NOTHING);

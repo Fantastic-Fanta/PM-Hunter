@@ -644,6 +644,7 @@ def keep_roblox_in_front():
 
 last_click = [time.time()]
 test_catch = [0]  # encounters still to catch for practice: --practice, or the window's Debug mode
+fit_next = [False]  # the window's Debug mode: the layout fitted again (and drawn) at the next encounter
 AFK_EVERY = 15 * 60  # Roblox kicks after 20 min without input
 
 
@@ -787,8 +788,10 @@ def window_buttons():
             if cmd == "toggle":
                 toggle()
             elif cmd in ("test on", "test off"):
-                test_catch[0] = int(cmd == "test on")
-                say("  (Debug mode: the next encounter is caught)" if test_catch[0] else "  (Debug mode off)")
+                on = cmd == "test on"
+                test_catch[0], fit_next[0] = int(on), on
+                say("  (Debug mode: the layout fitted and the next encounter caught)" if test_catch[0]
+                    else "  (Debug mode off)")
                 publish()
             elif cmd in ("code", "logout"):
                 website_key(devices.N_KEYCODE if cmd == "code" else devices.L_KEYCODE)
@@ -1937,8 +1940,8 @@ def hunt(cfg, args):
             time.sleep(0.1)
             continue
 
-        got = read_encounter(hint, clicks=not args.watch, draw=args.calibrate)
-        args.calibrate = False
+        got = read_encounter(hint, clicks=not args.watch, draw=args.calibrate or fit_next[0])
+        args.calibrate = fit_next[0] = False
         since = None
         if not got:
             last_battle = None
