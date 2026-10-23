@@ -51,7 +51,7 @@ INK, PAPER, GREY, LINE, SOFT = "#111111", "#ffffff", "#8a8a8a", "#e4e4e4", "#f4f
 FONT = "Segoe UI" if WINDOWS else "Helvetica Neue"
 WEBHOOK = r"https://((ptb|canary)\.)?discord(app)?\.com/api/webhooks/\d+/\S+$"
 MONO = "Consolas" if WINDOWS else "Menlo"
-PANEL, ROW = 230, 44  # what ••• adds under the pill: the panel's height, a row's
+PANEL, ROW = 152, 44  # what ••• adds under the pill: the panel's height, a row's
 SLIDE = 0.45  # s, for the pill to grow into the panel or back
 KEY = "#ff00fe"  # on Windows the window is see-through where it's this color: all but the pill
 
@@ -129,7 +129,7 @@ class Hunt:
         u = self.u = max(1.0, root.winfo_fpixels("1i") / 96)  # Windows' display scaling
         self.W, self.H = round(360 * u), round(52 * u)
         self.full = self.H + round(PANEL * u)
-        self.open, self.extra, self.found_now = False, 0.0, False
+        self.open, self.extra, self.found_now, self.shape, self.grabbed = False, 0.0, False, None, None
         if WINDOWS:
             clear = KEY
             root.attributes("-transparentcolor", KEY)
@@ -140,7 +140,6 @@ class Hunt:
         c = self.canvas = tk.Canvas(root, width=self.W, height=self.full, bg=clear, highlightthickness=0, bd=0)
         self.font = tkfont.Font(family=MONO, size=11, weight="bold")
         self.label_font = tkfont.Font(family=FONT, size=10)
-        self.small_font = tkfont.Font(family=FONT, size=9)
 
         def box(var, on_in, on_out):
             e = tk.Entry(c, textvariable=var, font=(FONT, 10), relief="flat", bd=0, highlightthickness=0)
@@ -168,20 +167,18 @@ class Hunt:
         self.place()
 
         self.hover = None
-        actions = {"main": self.main, "more": self.more, "code": self.open_site, "debug": self.flip_debug,
-                   "test": self.flip_test, "update": self.do_update, "folder": lambda: self.open_folder(""),
+        actions = {"main": self.main, "more": self.more, "code": self.open_site, "test": self.flip_test, "update": self.do_update, "folder": lambda: self.open_folder(""),
                    "quit": self.close}
         for tag, action in actions.items():
             c.tag_bind(tag, "<Enter>", lambda e, t=tag: self.hovering(t))
             c.tag_bind(tag, "<Leave>", lambda e: self.hovering(None))
             c.tag_bind(tag, "<Button-1>", lambda e, a=action: a())
         c.bind("<Button-1>", lambda e: c.focus_set(), add="+")  # a click off a box leaves it
-        c.tag_bind("drag", "<ButtonPress-1>", self.drag_start)
-        c.tag_bind("drag", "<B1-Motion>", self.drag)
-        c.tag_bind("drag", "<ButtonRelease-1>", self.drag_end)
+        c.tag_bind("drag", "<ButtonPress-1>", self.drag_start)  # grabbed by its black, then followed anywhere
+        c.bind("<B1-Motion>", self.drag)
+        c.bind("<ButtonRelease-1>", self.drag_end)
 
-        self.debug = self.settings.get("debug", False)  # Debug mode: every encounter caught, screenshots
-        self.test = False                               # Catch test: the next encounter caught, then off
+        self.test = False  # Debug mode: the next encounter caught with screenshots, then off
         self.reports = self.settings.get("reports", True)
         root.after(10, self.frameless)
 
@@ -195,7 +192,7 @@ class Hunt:
             style = user32.GetWindowLongW(hwnd, -20)  # GWL_EXSTYLE
             user32.SetWindowLongW(hwnd, -20, (style & ~0x80) | 0x40000)  # not WS_EX_TOOLWINDOW, WS_EX_APPWINDOW
         self.root.withdraw()
-        self.root.after(10, self.root.deiconify)
+        self.root.after(10, lambda: (self.root.deiconify(), self.place()))  # a Mac puts it elsewhere again
 
     def place(self):
         """The window over the pill and as much of the panel as is out, and the
@@ -208,22 +205,31 @@ class Hunt:
         self.outline(h)
 
     def outline(self, h):
-        c, W = self.canvas, self.W
-        c.delete("shape")
+        """The pill's outline, h tall: resized, never drawn again while it grows
+        or moves (an item gone from under the mouse loses Tk's drag)."""
+        c, W, r = self.canvas, self.W, self.H / 2
         fill, edge = (PAPER, "#cfcfcf") if self.found_now else (INK, "#3a3a3a")
-        self.rounded(0, 0, W, h, edge, ("shape", "drag"), self.H / 2)  # a hairline around it, for dark games
-        self.rounded(1, 1, W - 1, h - 1, fill, ("shape", "drag"), self.H / 2 - 1)
-        c.tag_lower("shape")
+        if not self.shape or not c.type(self.shape[0]):
+            self.shape = (self.rounded(0, 0, W, h, edge, ("shape", "drag"), r) +  # a hairline, for dark games
+                          self.rounded(1, 1, W - 1, h - 1, fill, ("shape", "drag"), r - 1))
+            c.tag_lower("shape")
+        else:
+            for item, xy in zip(self.shape, self.corners(0, 0, W, h, r) + self.corners(1, 1, W - 1, h - 1, r - 1)):
+                c.coords(item, *xy)
+
+    @staticmethod
+    def corners(x0, y0, x1, y1, r):
+        r = min(r, (y1 - y0) / 2)
+        return [(x0, y0, x0 + 2 * r, y0 + 2 * r), (x1 - 2 * r, y0, x1, y0 + 2 * r),
+                (x0, y1 - 2 * r, x0 + 2 * r, y1), (x1 - 2 * r, y1 - 2 * r, x1, y1),
+                (x0 + r, y0, x1 - r, y1), (x0, y0 + r, x1, y1 - r)]
 
     def rounded(self, x0, y0, x1, y1, color, tags=(), r=None):
+        """A rounded box: four circles and two bars. Its items."""
         c = self.canvas
-        r = min(r or (y1 - y0) / 2, (y1 - y0) / 2)
-        c.create_oval(x0, y0, x0 + 2 * r, y0 + 2 * r, fill=color, outline="", tags=tags)
-        c.create_oval(x1 - 2 * r, y0, x1, y0 + 2 * r, fill=color, outline="", tags=tags)
-        c.create_oval(x0, y1 - 2 * r, x0 + 2 * r, y1, fill=color, outline="", tags=tags)
-        c.create_oval(x1 - 2 * r, y1 - 2 * r, x1, y1, fill=color, outline="", tags=tags)
-        c.create_rectangle(x0 + r, y0, x1 - r, y1, fill=color, outline="", tags=tags)
-        c.create_rectangle(x0, y0 + r, x1, y1 - r, fill=color, outline="", tags=tags)
+        xy = self.corners(x0, y0, x1, y1, r or (y1 - y0) / 2)
+        return [c.create_oval(*b, fill=color, outline="", tags=tags) for b in xy[:4]] + \
+               [c.create_rectangle(*b, fill=color, outline="", tags=tags) for b in xy[4:]]
 
     def more(self):
         """••• grows the pill down into the panel, or back."""
@@ -250,13 +256,16 @@ class Hunt:
         self.grabbed = (e.x_root - self.pos[0], e.y_root - self.pos[1])
 
     def drag(self, e):
-        dx, dy = self.grabbed
-        self.pos = [e.x_root - dx, e.y_root - dy]
-        self.place()
+        if self.grabbed:
+            dx, dy = self.grabbed
+            self.pos = [e.x_root - dx, e.y_root - dy]
+            self.place()
 
     def drag_end(self, e):
-        self.settings["pos"] = [round(v) for v in self.pos]
-        save_json(SETTINGS, self.settings)
+        if self.grabbed:
+            self.grabbed = None
+            self.settings["pos"] = [round(v) for v in self.pos]
+            save_json(SETTINGS, self.settings)
 
     def hovering(self, tag):
         """Under the mouse: lighter. Recolored, not drawn again, or the click
@@ -292,13 +301,14 @@ class Hunt:
         self.draw()
 
     def draw(self):
-        drawn = (self.code_text, self.main_icon, self.found_now, self.open, self.debug, self.test,
+        drawn = (self.code_text, self.main_icon, self.found_now, self.open, self.test,
                  bool(self.update), self.note)
         if drawn == getattr(self, "drawn", None):
             return  # the same again: left alone, so a click on it isn't lost
         self.drawn = drawn
         c, u, W, H = self.canvas, self.u, self.W, self.H
         c.delete("all")
+        self.shape = None
         self.lit = {}  # what the mouse lights up: tag -> (item, color, lit color)
         pill = self.rounded
 
@@ -357,59 +367,43 @@ class Hunt:
             self.lit[tag] = (c.create_rectangle(x0, y - 11 * u, x1, y + 11 * u, fill="", outline="",
                                                 tags=("panel", tag)), "", "")
 
-        switch(row(0, "Debug mode"), self.debug, "debug")
-        switch(row(1, "Catch test"), self.test, "test")
-        y = row(2, "Preferred ball")
+        switch(row(0, "Debug mode"), self.test, "test")
+        y = row(1, "Preferred ball")
         bx0, bx1 = W - pad - 150 * u, W - pad
         pill(bx0, y - 14 * u, bx1, y + 14 * u, box, ("panel", "ball"))
         self.ball_box.config(bg=box, fg=ink, insertbackground=ink, selectbackground=dim, selectforeground=fill)
         c.create_window(bx0 + 12 * u, y, window=self.ball_box, anchor="w", width=bx1 - bx0 - 24 * u, height=22 * u,
                         tags="panel")
-        y = row(3, "Update")
-        if self.update:
-            words = self.note or "Install"
-            bx0 = W - pad - max(90 * u, self.label_font.measure(words) + 32 * u)
-            pill(bx0, y - 15 * u, W - pad, y + 15 * u, ink, ("panel", "update"))
-            c.create_text((bx0 + W - pad) / 2, y, text=words, font=self.label_font, fill=fill,
-                          tags=("panel", "update"))
-            self.lit["update"] = (c.create_rectangle(bx0, y - 15 * u, W - pad, y + 15 * u, fill="", outline="",
-                                                     tags=("panel", "update")), "", "")
-        else:
-            c.create_text(W - pad, y, text="Up to date", anchor="e", font=self.label_font, fill=dim,
-                          tags=("panel", "drag"))
-        y = self.full - 24 * u
-        c.create_text(pad + 4 * u, y, text=f"Build {NAME}", anchor="w", font=self.small_font, fill=edge,
-                      tags=("panel", "drag"))
-        quit_ = c.create_text(W - pad - 4 * u, y, text="Quit", anchor="e", font=self.small_font, fill=dim,
-                              tags=("panel", "quit"))
-        self.lit["quit"] = (quit_, dim, ink)
-        x = c.bbox(quit_)[0] - 18 * u
-        self.lit["folder"] = (c.create_text(x, y, text="Folder", anchor="e", font=self.small_font, fill=dim,
-                                            tags=("panel", "folder")), dim, ink)
+        # Update, Folder, Quit: one row of pills
+        y = H + 6 * u + ROW * u * 2 + 26 * u
+        gap = 10 * u
+        bw = (W - 2 * pad - 2 * gap) / 3
+        update = (self.note or "Update") if self.update else "Up to date"
+        for i, (tag, words) in enumerate((("update", update), ("folder", "Folder"), ("quit", "Quit"))):
+            x0 = pad + i * (bw + gap)
+            on = tag != "update" or self.update
+            filled = tag == "update" and self.update
+            pill(x0, y - 16 * u, x0 + bw, y + 16 * u, ink if filled else box, ("panel", tag if on else "drag"))
+            color = fill if filled else ("#3a3a3a" if light else "#c8c8c8") if on else edge
+            item = c.create_text(x0 + bw / 2, y, text=words, font=self.label_font, fill=color,
+                                 tags=("panel", tag if on else "drag"))
+            if on:
+                self.lit[tag] = (item, color, color if filled else ink)  # brighter under the mouse
         c.itemconfig("panel", state=shown)
         self.hovering(self.hover)
 
     # ------------------------------------------------------------ the panel's settings
 
-    def flip_debug(self):
-        """Debug mode: every encounter is caught, with screenshots for the
-        developer. A hunt that's on starts again the new way."""
-        self.debug = not self.debug
-        self.settings["debug"] = self.debug
-        save_json(SETTINGS, self.settings)
-        self.draw()
-        if self.proc is not None and self.mode in ("hunt", "debug"):
-            self.restart(self.hunt_mode())
-
     def flip_test(self):
-        """Catch test: the next encounter is caught (then the game saved), and
-        it turns itself off. Before a hunt, it waits for one."""
+        """Debug mode: the next encounter is caught, with a screenshot every
+        turn for the developer, the game saved, and it turns itself off.
+        Before a hunt, it waits for one."""
         self.test = not self.test
         self.send("test on" if self.test else "test off")
         self.draw()
 
     def hunt_mode(self):
-        return "debug" if self.debug else "hunt"
+        return "hunt"
 
     def restart(self, mode):
         self.stop(wait=True)
@@ -809,7 +803,7 @@ def smoke(hunt):
                 time.sleep(0.01)
         hunt.more()
         settle()
-        for flip in (hunt.flip_debug, hunt.flip_debug, hunt.flip_test, hunt.flip_test):
+        for flip in (hunt.flip_test, hunt.flip_test):
             flip()
             root.update()
         balls = []

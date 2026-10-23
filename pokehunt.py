@@ -642,7 +642,7 @@ def keep_roblox_in_front():
 
 
 last_click = [time.time()]
-test_catch = [0]  # encounters still to catch for practice: --practice, or the window's Catch test
+test_catch = [0]  # encounters still to catch for practice: --practice, or the window's Debug mode
 AFK_EVERY = 15 * 60  # Roblox kicks after 20 min without input
 
 
@@ -787,7 +787,7 @@ def window_buttons():
                 toggle()
             elif cmd in ("test on", "test off"):
                 test_catch[0] = int(cmd == "test on")
-                say("  (Catch test: the next encounter is caught)" if test_catch[0] else "  (Catch test off)")
+                say("  (Debug mode: the next encounter is caught)" if test_catch[0] else "  (Debug mode off)")
                 publish()
             elif cmd in ("code", "logout"):
                 website_key(devices.N_KEYCODE if cmd == "code" else devices.L_KEYCODE)
@@ -1978,8 +1978,9 @@ def hunt(cfg, args):
             practice = test_catch[0] > 0
             if practice or wanted(enc, notify):  # worth catching, not stopping
                 test_catch[0] -= practice
-                publish()  # the window's Catch test turns off
-                result, details = catch(enc, img, lay, cfg["catch"], first_ball=not practice, debug=args.debug)
+                publish()  # the window's Debug mode turns off
+                result, details = catch(enc, img, lay, cfg["catch"], first_ball=not practice,
+                                        debug=args.debug or practice)  # the window's Debug mode: screenshots
                 if result == "taken over":
                     continue  # read again: the website battles it
                 print(f"  catch: {result} ({details})", flush=True)
