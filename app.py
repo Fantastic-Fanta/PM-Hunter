@@ -534,7 +534,8 @@ class Hunt:
             if problem:
                 error.config(text=problem)
                 return
-            hook = hook_var.get().strip()
+            pasted = cfg.pop("webhook", "")  # a whole config pasted in: the box wins, unless it's empty
+            hook = hook_var.get().strip() or (pasted.strip() if isinstance(pasted, str) else "")
             if hook and not re.match(r"https://((ptb|canary)\.)?discord(app)?\.com/api/webhooks/", hook):
                 error.config(text="The webhook should start with https://discord.com/api/webhooks/ "
                                   "(Discord: channel settings > Integrations > Webhooks > Copy URL).")
