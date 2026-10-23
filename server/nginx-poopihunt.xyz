@@ -1,0 +1,53 @@
+# poopihunt.xyz: Hunt's downloads, updates and website. Kept apart from
+# stingray-digital.online (relay): its own folder, owner, logs and
+# certificate. The website's API runs as the poopihunt user
+# (poopihunt-api.service, 127.0.0.1:8791); everything else is static.
+# Installed by publish-server.sh --setup.
+server {
+    listen 80;
+    server_name poopihunt.xyz www.poopihunt.xyz;
+    root /srv/poopihunt.xyz/public;  # for certificate renewals
+    location /.well-known/acme-challenge/ { }
+    location / {
+        return 301 https://poopihunt.xyz$request_uri;
+    }
+}
+server {
+    listen 443 ssl;
+    server_name poopihunt.xyz www.poopihunt.xyz;
+    ssl_certificate     /etc/letsencrypt/live/poopihunt.xyz/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/poopihunt.xyz/privkey.pem;
+    root /srv/poopihunt.xyz/public;
+    access_log /var/log/nginx/poopihunt.access.log;
+    error_log /var/log/nginx/poopihunt.error.log;
+    location / {
+        try_files $uri $uri/ =404;
+    }
+    location ~ \.apk$ {
+        types { }
+        default_type application/vnd.android.package-archive;  # phones offer to install it
+    }
+    location = /version.json {
+        add_header Cache-Control "no-cache";  # the app always sees the newest
+    }
+    # the battle page
+    location = /app { return 301 /app/; }
+    location ^~ /app/ {
+        add_header Cache-Control "no-cache";
+        add_header Content-Security-Policy "default-src 'self'; img-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+        add_header X-Content-Type-Options nosniff;
+        add_header Referrer-Policy no-referrer;
+        try_files $uri $uri/ =404;
+    }
+    # devices and the page talk to hunt_server.py
+    location /api/ {
+        proxy_pass http://127.0.0.1:8791;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;  # replaces whatever the client sent: rate limits go by it
+        proxy_set_header Connection "";
+        proxy_buffering off;                      # the page's live updates
+        proxy_read_timeout 60s;                   # devices hold a request open up to 25 s
+        client_max_body_size 1m;                  # a screenshot
+    }
+}

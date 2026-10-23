@@ -1,0 +1,26 @@
+# secrets: webhooks, this computer's website key, your own config (has your webhook)
+secrets.json
+website.key
+config.json
+
+# this computer's runs
+calibration.json
+encounters.csv
+finds/
+debug/
+debug-hunt.log
+setup.log
+
+# built / installed
+*.apk
+.venv/
+.venv-win/
+__pycache__/
+*.pyc
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/build/
+android/local.properties
+.claude/
+.DS_Store

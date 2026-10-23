@@ -1,0 +1,35 @@
+{
+  "webhook": "PASTE YOUR DISCORD WEBHOOK HERE",
+  "ping": "@here",
+
+  "targets": [
+    {"species": "Tympole", "reskin": "Devil", "gradient": "Moonbane", "shiny": true}
+  ],
+
+  "notify": [],
+
+  "post": [],
+
+  "catch": {
+    "first_ball": "Quick Ball",
+    "sleep_move": "Yawn",
+    "guard_move": "Protect",
+    "sleep_with": "Clodsire",
+    "asleep_ball": "Repeat Ball",
+    "awake_ball": "Repeat Ball",
+    "new_ball": "Dive Ball",
+    "max_balls": 8,
+    "max_turns": 30,
+    "legendary_max_balls": 30,
+    "legendary_max_turns": 90,
+    "heal_below": 0.4,
+    "heal_item": "Full Restore",
+    "pp_item": "Max Elixir",
+    "on_fail": "hold"
+  },
+  "save_after_catch": true,
+
+  "keepalive_seconds": 5,
+  "status_every_minutes": 60,
+  "quiet_alert_minutes": 3
+}

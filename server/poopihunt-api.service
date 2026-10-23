@@ -1,0 +1,28 @@
+# Hunt's website API (hunt_server.py) on 127.0.0.1:8791, behind nginx's
+# poopihunt.xyz site. Runs as poopihunt and may write only its data folder.
+[Unit]
+Description=Hunt website API (poopihunt.xyz)
+After=network.target
+
+[Service]
+User=poopihunt
+Group=poopihunt
+WorkingDirectory=/srv/poopihunt.xyz/api
+ExecStart=/srv/poopihunt.xyz/api/.venv/bin/python /srv/poopihunt.xyz/api/hunt_server.py --host 127.0.0.1 --port 8791 --db /srv/poopihunt.xyz/data/hunt.db
+Restart=always
+RestartSec=3
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ReadWritePaths=/srv/poopihunt.xyz/data
+MemoryMax=300M
+
+[Install]
+WantedBy=multi-user.target

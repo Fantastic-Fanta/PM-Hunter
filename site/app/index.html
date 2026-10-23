@@ -1,0 +1,1167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Hunt">
+<link rel="manifest" href="manifest.json">
+<title>Hunt</title>
+<style>
+  /* A Pokemon Emerald battle, drawn at the GBA's own 240 x 160 pixels and zoomed to fit
+     (everything below is in GBA pixels). Colors are the game's. */
+  /* Gen 3's own fonts, rebuilt from the game's glyphs; drawn at 16 px (their pixel grid) and nothing else.
+     Gen3 Small is the one in the HP boxes. U+E000 is its "Lv". */
+  @font-face { font-family: "Gen3"; src: url(fonts/gen3.woff2) format("woff2"); font-display: block; }
+  @font-face { font-family: "Gen3 Small"; src: url(fonts/gen3-small.woff2) format("woff2"); font-display: block; }
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: #000; color: #fff; display: flex; align-items: center; justify-content: center;
+         min-height: 100dvh; overflow: hidden; -webkit-tap-highlight-color: transparent;
+         -webkit-user-select: none; user-select: none; touch-action: manipulation; }
+  #app { width: 240px; font: 400 16px/16px "Gen3", monospace; -webkit-font-smoothing: none; font-synthesis: none; }
+  .small { font-family: "Gen3 Small", monospace; }
+  button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+  button:disabled { cursor: default; }
+  [hidden] { display: none !important; }
+  img { image-rendering: pixelated; }
+  svg { display: block; }
+
+  /* ------------------------------------------------ just the screen, filling the window */
+  .led { display: inline-block; width: 4px; height: 4px; margin: 0 3px 1px 1px; background: #4a4152; vertical-align: middle; }
+  .led.on { background: #6be36b; box-shadow: 0 0 3px #6be36b; }
+  .screen { position: relative; width: 240px; height: 160px; overflow: hidden; background: #000; }
+  /* ------------------------------------------------ the battle */
+  .layer { position: absolute; inset: 0; }
+  .bg { position: absolute; left: 0; top: 0; width: 240px; height: 112px;
+        background: repeating-linear-gradient(180deg, #deffd5 0 1px, #d5f6d5 1px 4px);
+        background-color: #deffd5; }
+  .bg::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 16px;
+                background: linear-gradient(180deg, #deffd5 0 1px, #b4e694 1px 4px, #deffd5 4px 5px, #bdeea4 5px 8px,
+                                            #deffd5 8px 9px, #c5eebd 9px 12px, #deffd5 12px 13px, #cdf6c5 13px 16px); }
+  .side { position: absolute; inset: 0 0 48px 0; }
+  .pad { position: absolute; }
+  .mon { position: absolute; pointer-events: none; }
+  #foe { z-index: 2; } #lead { z-index: 2; }
+
+  /* the healthboxes */
+  .hb { position: absolute; z-index: 4; color: #414141; font-family: "Gen3 Small", monospace;
+        text-shadow: 1px 0 #ded5b4, 0 1px #ded5b4, 1px 1px #ded5b4; }
+  .hb .frame { position: absolute; background: #ffffde; border-radius: 4px;
+               box-shadow: inset 0 0 0 1px #526a62, inset 0 0 0 2px #203900, inset 0 0 0 3px #ded5b4; }
+  .hb .tail { position: absolute; background: #526a62; }
+  .foe-hb { left: 12px; top: 14px; width: 100px; height: 30px; }
+  .foe-hb .frame { left: 2px; top: 2px; width: 92px; height: 25px; }
+  .foe-hb .tail { left: 3px; top: 20px; width: 97px; height: 10px; clip-path: polygon(0 6px, 88px 0, 97px 6px, 94px 10px, 10px 10px); }
+  .lead-hb { left: 126px; top: 72px; width: 106px; height: 38px; }
+  .lead-hb .frame { left: 10px; top: 2px; width: 92px; height: 32px; }
+  .lead-hb .tail { left: 2px; top: 18px; width: 104px; height: 20px; clip-path: polygon(96px 0, 104px 0, 104px 18px, 101px 20px, 0 20px, 4px 15px, 96px 15px); }
+  .hb .name { position: absolute; top: 1px; white-space: nowrap; }
+  .hb .lv { position: absolute; top: 1px; white-space: nowrap; }
+  .foe-hb .name { left: 9px; } .foe-hb .lv { right: 13px; }
+  .lead-hb .name { left: 17px; } .lead-hb .lv { right: 11px; }
+  .hpwrap { position: absolute; display: flex; align-items: flex-start; }
+  .foe-hb .hpwrap { left: 22px; top: 17px; }
+  .lead-hb .hpwrap { left: 30px; top: 17px; }
+  .hpbar { position: relative; width: 48px; height: 6px; background: #526a5a; }
+  .hpbar::before { content: ""; position: absolute; inset: 1px 0 1px 0; background: #fff; }
+  .hpbar i { position: absolute; left: 1px; top: 2px; height: 2px; width: 47px; background: #4a415a;
+             box-shadow: inset 0 1px 0 #4a415a; }
+  .hpbar b { position: absolute; left: 1px; top: 2px; height: 2px; width: 47px;
+             background: linear-gradient(180deg, #5ad583 0 1px, #73ffac 1px 2px); transition: width .9s steps(24); }
+  .hpbar.mid b { background: linear-gradient(180deg, #cdac08 0 1px, #ffe639 1px 2px); }
+  .hpbar.low b { background: linear-gradient(180deg, #ac414a 0 1px, #ff5a39 1px 2px); }
+  .hpnum { position: absolute; right: 12px; top: 20px; white-space: pre; }
+  .expwrap { position: absolute; left: 17px; top: 34px; display: flex; gap: 2px; }
+  .expbar { width: 64px; height: 3px; margin-top: 0; background: repeating-linear-gradient(90deg, #ded5b4 0 1px, #c5bd73 1px 2px); }
+  .status { position: absolute; top: 5px; height: 8px; padding: 0 2px; line-height: 8px; color: #fff;
+            text-shadow: none; border-radius: 1px; }
+  .foe-hb .status { right: 44px; }
+  .bob { animation: bob .66s steps(1) infinite; }
+  @keyframes bob { 50% { transform: translateY(1px); } }
+
+  /* the windows: the red-framed text box and the menus' white windows */
+  .msgbox { position: absolute; left: 0; top: 112px; width: 240px; height: 48px; background: #4a4152; z-index: 6; }
+  .msgframe { position: absolute; left: 1px; top: 3px; width: 238px; height: 42px; background: #6aa4a4;
+              border: solid #d54a39; border-width: 1px 6px; border-radius: 5px; box-shadow: inset 0 0 0 1px #838b8b; }
+  .msgframe.half { width: 124px; border-right-width: 0; border-radius: 5px 0 0 5px; }
+  .msgtext { position: absolute; left: 9px; top: 6px; right: 9px; height: 32px; overflow: hidden; white-space: pre-line;
+             color: #fff; text-shadow: 1px 0 #6a5a73, 0 1px #6a5a73, 1px 1px #6a5a73; }
+  .half .msgtext { right: 2px; }
+  .more { position: absolute; right: 10px; bottom: 6px; animation: more .6s steps(1) infinite; }
+  @keyframes more { 50% { transform: translateY(1px); } }
+  .win { position: absolute; z-index: 7; background: #fff; border-radius: 3px; color: #484858;
+         text-shadow: 1px 0 #d0d0c8, 0 1px #d0d0c8, 1px 1px #d0d0c8;
+         box-shadow: inset 0 0 0 1px #4a4152, inset 0 0 0 2px #293131, inset 0 0 0 3px #6a8bbd,
+                     inset 0 0 0 5px #6a5a73, inset 0 0 0 6px #ded5de; }
+  .opt { position: absolute; height: 16px; text-align: left; white-space: nowrap; }
+  .opt .cur { position: absolute; left: 0; top: 4px; visibility: hidden; }
+  .opt.on .cur { visibility: visible; }
+  .opt span { position: absolute; left: 8px; top: 0; }
+  .opt:disabled span { color: #a8a8b0; text-shadow: none; }
+
+  .act { left: 120px; top: 112px; width: 120px; height: 48px; }
+  .cmd { left: 152px; top: 112px; width: 88px; height: 48px; }
+  .msgframe.wide { width: 156px; border-right-width: 0; border-radius: 5px 0 0 5px; }
+  .wide .msgtext { right: 2px; }
+  .moves { left: 0; top: 112px; width: 160px; height: 48px; }
+  .ppbox { left: 160px; top: 112px; width: 80px; height: 48px; }
+  .ppbox .l1, .ppbox .l2 { position: absolute; left: 8px; right: 7px; white-space: nowrap; }
+  .ppbox .l1 { top: 8px; display: flex; justify-content: space-between; }
+  .ppbox .l2 { top: 24px; overflow: hidden; }
+  .pp-half { color: #e8a000; } .pp-low { color: #e85818; } .pp-none { color: #d02020; }
+  .yesno { left: 182px; top: 66px; width: 56px; height: 44px; }
+  .startmenu { left: 146px; top: 2px; width: 92px; height: 108px; }
+  .page { left: 0; top: 0; width: 240px; height: 112px; }
+  .page h3 { margin: 0; position: absolute; left: 10px; top: 7px; font-weight: 400; color: #e05040;
+             text-shadow: 1px 0 #f8c8a8, 0 1px #f8c8a8, 1px 1px #f8c8a8; }
+  .page .body { position: absolute; left: 8px; right: 8px; top: 24px; bottom: 7px; overflow-y: auto; }
+  .page .row { position: relative; display: block; width: 100%; height: 16px; text-align: left; }
+  .page .row .cur { position: absolute; left: 0; top: 4px; visibility: hidden; }
+  .page .row.on .cur { visibility: visible; }
+  .page .row > span:not(.cur) { position: absolute; left: 8px; right: 0; top: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .page .row small { float: right; color: #888898; font-family: "Gen3 Small", monospace; }
+  .page .shot { display: block; margin: 0 auto; width: 136px; height: auto; image-rendering: auto; border: 1px solid #484858; }
+  .page .log { font: 16px/11px "Gen3 Small", monospace; white-space: pre-wrap; word-break: break-word; color: #484858;
+               text-shadow: none; -webkit-user-select: text; user-select: text; }
+
+  /* effects */
+  .wipe { position: absolute; inset: 0; z-index: 20; pointer-events: none; display: none; }
+  .intro .wipe { display: block; animation: wipe .9s steps(9) both; background: repeating-linear-gradient(180deg, #000 0 8px, transparent 8px 16px); }
+  @keyframes wipe { 0% { opacity: 1; background-size: 100% 16px; } 33% { filter: invert(1); } 66% { filter: none; } 100% { opacity: 0; } }
+  .intro .side.foe-side { animation: from-left .9s .35s steps(18) both; }
+  .intro .side.lead-side { animation: from-right .9s .35s steps(18) both; }
+  @keyframes from-left { from { transform: translateX(-240px); } }
+  @keyframes from-right { from { transform: translateX(240px); } }
+  .intro .foe-hb { animation: from-left .5s 1.25s steps(10) both; }
+  .intro .lead-hb { animation: from-right .5s 1.6s steps(10) both; }
+  #foe.absorbed { animation: absorb .35s steps(5) forwards; }
+  @keyframes absorb { 60% { filter: brightness(8); } to { filter: brightness(8); transform: scale(0); opacity: 0; } }
+  #foe.hit { animation: hit .4s steps(1) 2; }
+  @keyframes hit { 50% { opacity: 0; } }
+  #foe.out { opacity: 0; }
+  .ball { position: absolute; z-index: 5; left: 0; top: 0; width: 12px; height: 12px; pointer-events: none; }
+  .ball.throw { animation: ball-x .55s linear both; }
+  .ball.throw svg { animation: ball-y .55s cubic-bezier(.3, -0.9, .7, .2) both; }
+  @keyframes ball-x { from { transform: translateX(28px); } to { transform: translateX(170px); } }
+  @keyframes ball-y { from { transform: translateY(100px) rotate(0); } to { transform: translateY(40px) rotate(720deg); } }
+  .ball.rest { transform: translate(170px, 58px); }
+  .ball.rest.shake svg { animation: shake 1.3s steps(1) infinite; transform-origin: 6px 12px; }
+  @keyframes shake { 0%, 50%, 100% { transform: none; } 10% { transform: rotate(-20deg); } 20% { transform: rotate(20deg); }
+                     30% { transform: rotate(-10deg); } }
+  .ball.rest.caught { filter: brightness(.8); }
+  .stars { position: absolute; z-index: 6; pointer-events: none; }
+  .stars i { position: absolute; width: 7px; height: 7px; opacity: 0; animation: star .9s steps(4) both; }
+  @keyframes star { 0% { opacity: 0; transform: scale(.3); } 40% { opacity: 1; transform: scale(1.2); } 100% { opacity: 0; transform: scale(.5); } }
+
+  /* ------------------------------------------------ the bag (Emerald's) */
+  #bag { z-index: 10; }
+  #startmenu, #page { z-index: 8; }
+  .bagbg { background: repeating-linear-gradient(180deg, #4a83ff 0 2px, #d56aff 2px 4px); }
+  .banner { position: absolute; left: 10px; top: 8px; width: 84px; height: 16px; background: #ffe68b; border-radius: 3px;
+            box-shadow: inset 0 0 0 1px #293941, 0 1px 0 #293941; color: #626273; text-align: center;
+            text-shadow: 1px 0 #e8c870, 0 1px #e8c870, 1px 1px #e8c870; }
+  .banner .t { position: absolute; left: 14px; right: 2px; top: 0; white-space: nowrap; }
+  .banner .ballic { position: absolute; left: 2px; top: 2px; }
+  .banner .arr { position: absolute; top: 0; width: 12px; height: 16px; color: #626273; }
+  .banner .arr.l { left: -11px; color: #fff; text-shadow: 1px 1px #293941; transform: scaleX(-1); }
+  .banner .arr.r { right: -11px; color: #fff; text-shadow: 1px 1px #293941; }
+  .dots { position: absolute; left: 40px; top: 28px; display: flex; gap: 6px; }
+  .dots i { width: 3px; height: 3px; background: #fff; opacity: .55; box-shadow: 1px 1px 0 #293941; }
+  .dots i.on { opacity: 1; background: #ffe68b; }
+  .bagpic { position: absolute; left: 20px; top: 36px; }
+  .iconbox { position: absolute; left: 4px; top: 70px; width: 32px; height: 28px; background: #fff; border-radius: 2px;
+             box-shadow: inset 0 0 0 1px #7b7b7b; display: grid; place-items: center; }
+  .iconbox img { width: 24px; height: 24px; }
+  .descbox { position: absolute; left: 0; top: 100px; width: 107px; height: 57px; background: #fff; border-radius: 4px;
+             box-shadow: inset 0 0 0 1px #7b7b7b; padding: 4px 5px; line-height: 16px; color: #626273;
+             text-shadow: 1px 0 #cdcdcd, 0 1px #cdcdcd, 1px 1px #cdcdcd; white-space: pre-line; overflow: hidden; }
+  .baglist { position: absolute; left: 106px; top: 2px; width: 132px; height: 156px; border-radius: 3px;
+             background: linear-gradient(180deg, #ffe68b 0 14px, #ffffcd 14px calc(100% - 12px), #ffe68b calc(100% - 12px));
+             box-shadow: inset 0 0 0 2px #396a8b, inset 0 0 0 3px #293941, inset 0 0 0 4px #626273;
+             color: #626273; text-shadow: 1px 0 #cdcdcd, 0 1px #cdcdcd, 1px 1px #cdcdcd; }
+  .baglist .row { position: absolute; left: 6px; right: 6px; height: 16px; text-align: left; white-space: nowrap; }
+  .baglist .row .cur { position: absolute; left: 0; top: 4px; visibility: hidden; }
+  .baglist .row.on .cur { visibility: visible; }
+  .baglist .row span { position: absolute; left: 8px; right: 0; top: 0; overflow: hidden; text-overflow: ellipsis; }
+  .baglist .row:disabled span { color: #b0b0b8; }
+
+  /* ------------------------------------------------ logging in */
+  .codewin { left: 16px; top: 12px; width: 208px; height: 92px; }
+  .codewin h3 { margin: 0; position: absolute; left: 0; right: 0; top: 9px; text-align: center; font-weight: 400; color: #e05040;
+                text-shadow: 1px 0 #f8c8a8, 0 1px #f8c8a8, 1px 1px #f8c8a8; }
+  .slots { position: absolute; left: 34px; top: 38px; display: flex; gap: 6px; }
+  .slots i { width: 18px; height: 20px; font-style: normal; text-align: center; font-size: 16px; line-height: 18px;
+             border-bottom: 2px solid #a0a0b0; }
+  .slots i.cur { border-bottom-color: #e05040; animation: blink .8s steps(1) infinite; }
+  @keyframes blink { 50% { border-bottom-color: transparent; } }
+  .codewin .okbtn { position: absolute; left: 76px; top: 66px; width: 56px; height: 16px; }
+  #code { position: absolute; left: 34px; top: 36px; width: 140px; height: 24px; opacity: 0; font-size: 16px; z-index: 9;
+          border: 0; padding: 0; color: transparent; background: transparent; caret-color: transparent; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="screen" id="screen">
+
+    <!-- the battle -->
+    <div class="layer" id="battle">
+      <div class="bg"></div>
+      <div class="side foe-side"><div class="pad" id="foe-pad"></div><img class="mon" id="foe" alt=""></div>
+      <div class="side lead-side"><div class="pad" id="lead-pad"></div><img class="mon" id="lead" alt=""></div>
+      <div class="stars" id="stars"></div>
+      <div class="ball" id="ball" hidden></div>
+      <div class="hb foe-hb" id="foe-hb" hidden>
+        <div class="tail"></div><div class="frame"></div>
+        <span class="name" id="foe-name"></span><span class="status" id="foe-status" hidden></span>
+        <span class="lv" id="foe-lv"></span>
+        <div class="hpwrap"><span class="hplabel"></span><div class="hpbar"><i></i><b></b></div></div>
+      </div>
+      <div class="hb lead-hb" id="lead-hb" hidden>
+        <div class="tail"></div><div class="frame"></div>
+        <span class="name" id="lead-name"></span><span class="lv" id="lead-lv"></span>
+        <div class="hpwrap"><span class="hplabel"></span><div class="hpbar" id="lead-bar"><i></i><b></b></div></div>
+        <span class="hpnum" id="lead-hpnum"></span>
+        <div class="expwrap"><span id="explabel"></span><div class="expbar"></div></div>
+      </div>
+      <div class="msgbox"><div class="msgframe" id="msgframe"><div class="msgtext" id="msgtext"></div>
+        <span class="more" id="more" hidden></span></div></div>
+      <div class="win act" id="act" hidden></div>
+      <div class="win cmd" id="cmd" hidden></div>
+      <div class="win moves" id="moves" hidden></div>
+      <div class="win ppbox" id="ppbox" hidden><div class="l1"><span>PP</span><span id="pp"></span></div>
+        <div class="l2" id="ptype"></div></div>
+      <div class="win yesno" id="yesno" hidden></div>
+      <div class="wipe"></div>
+    </div>
+
+    <!-- the bag -->
+    <div class="layer bagbg" id="bag" hidden>
+      <div class="banner"><span class="ballic" id="bag-ballic"></span><span class="t" id="bag-pocket"></span>
+        <button class="arr l" data-pocket="-1" aria-label="Previous pocket">▶</button>
+        <button class="arr r" data-pocket="1" aria-label="Next pocket">▶</button></div>
+      <div class="dots" id="bag-dots"></div>
+      <div class="bagpic" id="bag-pic"></div>
+      <div class="iconbox"><img id="bag-icon" alt=""></div>
+      <div class="descbox" id="bag-desc"></div>
+      <div class="baglist" id="bag-list"></div>
+    </div>
+
+    <!-- START menu, and the pages it opens -->
+    <div class="win startmenu" id="startmenu" hidden></div>
+    <div class="win page" id="page" hidden><h3 id="page-title"></h3><div class="body" id="page-body"></div></div>
+
+    <!-- logging in -->
+    <div class="layer" id="login" hidden>
+      <div class="bg"></div>
+      <div class="win codewin"><h3>HUNT</h3><div class="slots" id="slots"></div>
+        <input id="code" maxlength="7" autocomplete="off" autocapitalize="characters" spellcheck="false" inputmode="text"
+               aria-label="Code">
+        <button class="opt okbtn on" id="go"><span class="cur"></span><span>LOG IN</span></button></div>
+      <div class="msgbox"><div class="msgframe"><div class="msgtext" id="login-text"></div></div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"})[c]);
+const UP = s => String(s ?? "").toUpperCase().replace(/POKEMON|POKÉMON/g, "POKéMON");
+
+async function api(path, data) {
+  const r = await fetch("/api" + path, data === undefined ? {} :
+    {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(data)});
+  const type = r.headers.get("Content-Type") || "";
+  const body = type.includes("json") ? await r.json() : await r.text();
+  if (!r.ok) throw Object.assign(new Error(typeof body === "string" ? body : "Something went wrong"), {status: r.status});
+  return body;
+}
+
+// ---------------------------------------------------------------- pixel art
+
+// rows of characters -> an SVG of 1 px rectangles
+function pix(rows, colors) {
+  const h = rows.length, w = rows[0].length;
+  let r = "";
+  rows.forEach((row, y) => {
+    for (let x = 0; x < w;) {
+      const c = row[x];
+      if (!colors[c]) { x++; continue; }
+      let x2 = x;
+      while (x2 < w && row[x2] === c) x2++;
+      r += `<rect x="${x}" y="${y}" width="${x2 - x}" height="1" fill="${colors[c]}"/>`;
+      x = x2;
+    }
+  });
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" shape-rendering="crispEdges" aria-hidden="true">${r}</svg>`;
+}
+const CURSOR = pix(["d....", "dd...", "ddd..", "dddd.", "ddd..", "dd...", "d...."], {d: "#484858"});
+const MORE = pix(["rrrrrrr", ".rrrrr.", "..rrr..", "...r..."], {r: "#f8f8f8"});
+const HP = pix(["0366666666666666", "3667776767777766", "6667776767776762", "6668888868888862", "3669996969996666", "0366666666666666"],
+  {3: "#d5cdbd", 6: "#526a5a", 7: "#ffb47b", 8: "#f69473", 9: "#de6a5a"});
+const EXP = pix(["4446464644", "9966696699", "9996969696"].map(r => r.replace(/6/g, ".")), {4: "#c5bd73", 9: "#ffe600"});
+const BALL = pix([
+  "....kkkk....", "..kkrrrrkk..", ".krrwrrrrrk.", ".krwrrrrrrk.", "krrrrkkrrrrk", "kkkkkwwkkkkk",
+  "kwwwkwwkwwwk", "kwwwwkkwwwwk", ".kwwwwwwwwk.", ".kwwwwwwwwk.", "..kkwwwwkk..", "....kkkk...."],
+  {k: "#202020", r: "#e83820", w: "#f8f8f8"});
+const STAR = pix(["...y...", "...y...", "..yyy..", "yyyyyyy", "..yyy..", "...y...", "...y..."], {y: "#fff8a0"});
+const BAGICON = pix(["..kkkk..", ".kbbbbk.", "kbbwbbbk", "kkkkkkkk", "kwwkwwwk", "kwwwwwwk", ".kwwwwk.", "..kkkk.."],
+  {k: "#293941", b: "#bd9c5a", w: "#ffe68b"});
+for (const el of document.querySelectorAll(".hplabel")) el.innerHTML = HP;
+$("explabel").innerHTML = EXP;
+$("more").innerHTML = MORE;
+$("ball").innerHTML = BALL;
+$("bag-ballic").innerHTML = BAGICON;
+for (const el of document.querySelectorAll(".cur")) el.innerHTML = CURSOR;
+
+// the grassy platforms, drawn row by row like the game's
+function pad(rx, ry, cut) {
+  let rows = [];
+  for (let y = 0; y < ry * 2; y++) {
+    const dy = (y + .5 - ry) / ry, half = Math.round(rx * Math.sqrt(Math.max(0, 1 - dy * dy)));
+    const innerDy = (y + .5 - ry) / (ry - 2.5), ihalf = Math.abs(innerDy) < 1 ? Math.round((rx - 5) * Math.sqrt(1 - innerDy * innerDy)) : 0;
+    let row = "";
+    for (let x = 0; x < rx * 2; x++) {
+      const d = Math.abs(x + .5 - rx);
+      row += d < ihalf ? "f" : d < half ? "r" : ".";
+    }
+    rows.push(row);
+  }
+  // little tufts of grass
+  const tufts = [[.22, .45], [.3, .62], [.38, .35], [.45, .7], [.52, .5], [.6, .32], [.66, .66], [.74, .45], [.82, .58],
+                 [.27, .3], [.56, .78], [.7, .26], [.17, .56], [.9, .5], [.42, .52]];
+  for (const [fx, fy] of tufts) {
+    const x = Math.round(fx * rx * 2), y = Math.round(fy * ry * 2);
+    for (const yy of [y, y + 1]) if (rows[yy] && rows[yy][x] === "f") rows[yy] = rows[yy].slice(0, x) + "t" + rows[yy].slice(x + 1);
+  }
+  if (cut) rows = rows.slice(0, cut);
+  return pix(rows, {r: "#acf673", f: "#7bd583", t: "#9cee7b"});
+}
+$("foe-pad").innerHTML = pad(63, 16);
+Object.assign($("foe-pad").style, {left: "113px", top: "48px"});
+$("lead-pad").innerHTML = pad(63, 16, 11);
+Object.assign($("lead-pad").style, {left: "1px", top: "101px"});
+
+// the screen as big as the window allows, nothing around it
+function fit() {
+  const k = Math.min(innerWidth / 240, innerHeight / 160);
+  $("app").style.zoom = k >= 2 ? Math.floor(k * 4) / 4 : k;
+}
+addEventListener("resize", fit);
+fit();
+
+// ---------------------------------------------------------------- logging in
+
+let devices = [], current = null, events = null;
+
+function show(which) {
+  $("login").hidden = which !== "login";
+  $("battle").hidden = which === "login";
+  if (which === "login") { panel = null; $("bag").hidden = $("startmenu").hidden = $("page").hidden = true; }
+}
+
+function startLogin(msg) {
+  show("login");
+  $("code").value = "";
+  drawSlots();
+  say($("login-text"), msg || "Type the code HUNT shows.\nIt works once.");
+  setTimeout(() => $("code").focus(), 50);
+}
+
+function drawSlots() {
+  const v = $("code").value;
+  $("slots").innerHTML = [0, 1, 2, 3, 4, 5].map(i => `<i class="${i === v.length ? "cur" : ""}">${esc(v[i] || "")}</i>`).join("");
+}
+$("code").addEventListener("input", e => {
+  e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+  drawSlots();
+});
+$("slots").onclick = () => $("code").focus();
+
+async function login() {
+  if ($("go").disabled) return;
+  $("go").disabled = true;
+  try {
+    current = (await api("/login", {code: $("code").value})).device;
+    await load();
+  } catch (e) {
+    say($("login-text"), e.message);
+  } finally {
+    $("go").disabled = false;
+  }
+}
+$("go").onclick = login;
+
+async function logout() {
+  await api("/logout", {}).catch(() => {});
+  devices = []; current = null;
+  if (events) events.close();
+  startLogin();
+}
+
+async function forget() {
+  const d = devices.find(d => d.id === current);
+  if (!d || !confirm(`Remove ${d.label || "this device"} from this browser? You'd need a new code to see it again.`)) return;
+  await api(`/devices/${d.id}/forget`, {}).catch(() => {});
+  current = null;
+  closePanels();
+  load();
+}
+
+// ---------------------------------------------------------------- devices
+
+async function load() {
+  try {
+    devices = (await api("/me")).devices;
+  } catch (e) {
+    if (e.status === 401) { startLogin(); return; }
+    throw e;
+  }
+  if (!devices.length) { startLogin(); return; }
+  if (!devices.some(d => d.id === current)) current = devices[0].id;
+  show("battle");
+  render();
+  listen();
+}
+
+function listen() {
+  if (events) events.close();
+  events = new EventSource("/api/live");
+  events.onmessage = m => {
+    const v = JSON.parse(m.data);
+    const i = devices.findIndex(d => d.id === v.id);
+    if (i >= 0) devices[i] = v; else devices.push(v);
+    if (v.id === current || panel === "devices") render();
+  };
+  events.onerror = () => {  // logged out elsewhere, or the server restarted: EventSource retries itself
+    api("/me").catch(e => { if (e.status === 401) { events.close(); startLogin(); } });
+  };
+}
+
+// ---------------------------------------------------------------- pictures and moves (via our server)
+
+const FORMS = {alolan: "alola", galarian: "galar", hisuian: "hisui", paldean: "paldea"};
+function monId(species) {
+  let s = String(species || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+  let form = "";
+  const m = s.match(/^(alolan|galarian|hisuian|paldean)\s+(.+)$/);
+  if (m) { form = "-" + FORMS[m[1]]; s = m[2]; }
+  // a gender sign misread as a letter of its own ("Sentret O") isn't part of the name
+  const words = s.split(/\s+/);
+  while (words.length > 1 && /^[a-z♀♂]$/.test(words[words.length - 1])) words.pop();
+  s = words.join(" ").replace(/♀/g, "f").replace(/♂/g, "m").replace(/[^a-z0-9]/g, "");
+  return s ? s + form : "";
+}
+const itemId = name => String(name || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+// (v: browsers keep these a week; a new version of the pictures gets a new address)
+const sprite = (kind, id) => id ? `/api/sprite/${kind}/${id}?v=5` : "";
+
+// the empty rows under a sprite, so its feet stand on the platform
+function blankBelow(img) {
+  try {
+    const c = document.createElement("canvas");
+    c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const g = c.getContext("2d");
+    g.drawImage(img, 0, 0);
+    const px = g.getImageData(0, 0, c.width, c.height).data;
+    for (let y = c.height - 1; y >= 0; y--)
+      for (let x = 0; x < c.width; x++) if (px[(y * c.width + x) * 4 + 3] > 20) return c.height - 1 - y;
+  } catch (e) {}
+  return 0;
+}
+
+// a sprite at its own pixel size, centred on cx with its feet at y
+// (the next picture loads aside and replaces the one on screen when it's ready: no blink)
+function setMon(img, src, cx, feet) {
+  if (img.dataset.src === src) return;
+  img.dataset.src = src;
+  if (!src) { img.hidden = true; img.removeAttribute("src"); return; }
+  const next = new Image();
+  next.onload = () => {
+    if (img.dataset.src !== src) return;  // another one came meanwhile
+    const w = next.naturalWidth, h = next.naturalHeight;
+    img.src = src;
+    Object.assign(img.style, {width: w + "px", height: h + "px", left: Math.round(cx - w / 2) + "px",
+                              top: Math.round(feet - h + blankBelow(next)) + "px"});
+    img.hidden = false;
+  };
+  next.onerror = () => { if (img.dataset.src === src) img.hidden = true; };
+  next.src = src;
+}
+
+const moveInfo = {};   // move id -> {type, category}
+function infoFor(name) {
+  const id = String(name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (!id) return null;
+  if (!(id in moveInfo)) {
+    moveInfo[id] = null;
+    api(`/move/${id}`).then(v => { moveInfo[id] = v; render(); }).catch(() => {});
+  }
+  return moveInfo[id];
+}
+
+// ---------------------------------------------------------------- the text box
+
+// lines type themselves out, like the game's
+const typing = new Map();
+function say(el, text) {
+  const t = typing.get(el) || {};
+  if (t.text === text) return;
+  clearInterval(t.timer);
+  // what's already there and stays the same isn't typed again
+  const shown = el.textContent;
+  let i = 0;
+  while (i < shown.length && i < text.length && shown[i] === text[i]) i++;
+  el.textContent = text.slice(0, i);
+  const timer = setInterval(() => {
+    i = Math.min(text.length, i + 1);
+    el.textContent = text.slice(0, i);
+    el.scrollTop = el.scrollHeight;
+    if (i >= text.length) clearInterval(timer);
+  }, 28);
+  typing.set(el, {text, timer});
+}
+
+// a few lines shown one after another (a new encounter, the battle's own messages)
+const SEQ_MS = 1800;
+let seq = null;
+function playSeq(lines) {
+  seq = {lines: lines.filter(Boolean), start: Date.now()};
+  for (let i = 1; i <= seq.lines.length; i++) setTimeout(render, i * SEQ_MS + 20);
+}
+function seqLine() {
+  if (!seq) return null;
+  const i = Math.floor((Date.now() - seq.start) / SEQ_MS);
+  if (i >= seq.lines.length) { seq = null; return null; }
+  return seq.lines[i];
+}
+function skipSeq() {
+  if (!seq) return false;
+  seq.start -= SEQ_MS - (Date.now() - seq.start) % SEQ_MS;
+  render();
+  return true;
+}
+// the battle's text, a sentence or two per box
+function chunks(text) {
+  const out = [];
+  for (const s of String(text).split(/(?<=[.!?])\s+/)) {
+    if (out.length && (out[out.length - 1] + " " + s).length <= 44) out[out.length - 1] += " " + s;
+    else out.push(s);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------- what the page shows
+
+let sent = 0, sentAt = 0;     // the last command this page sent (its seq)
+let pending = "";             // what it says until the device picks the command up
+let controlSent = "";         // "takeover" / "resume" until the device shows it
+let view = "main";            // main, fight, run
+let panel = null;             // null, bag, menu, devices, screen, log
+let cur = {act: 0, cmd: 0, move: 0, yes: 1, bag: 0, menu: 0, page: 0};
+let seen = {key: "", species: "", device: "", msg: null};
+let lastActing = "";
+const lastLead = {};          // device -> your Pokemon as last read (the page keeps showing it while HUNT hunts)
+
+function status(d, s) {
+  if (!d.online) return s.hunting === false ? "NOT HUNTING" : "OFFLINE";
+  if (s.hunting === false || !("hunting" in s)) return "NOT HUNTING";
+  if (s.remote) return "TAKEN OVER";
+  return s.running ? "HUNTING" : "PAUSED";
+}
+
+function facts() {
+  const d = devices.find(d => d.id === current);
+  if (!d) return null;
+  const s = d.state || {};
+  // (a gender sign misread as a letter of its own, "Sentret O", isn't part of the name)
+  const enc = Object.assign({}, s.enc, {species: String((s.enc || {}).species || "").trim().split(/\s+/)
+    .filter((w, i, all) => !(i > 0 && i === all.length - 1 && /^[A-Za-z♀♂]$/.test(w))).join(" ")});
+  const lead = s.lead || {};
+  const live = !!(d.online && s.hunting);
+  const inBattle = s.phase === "battle" && !!enc.species;
+  const busy = !!s.acting || (sent > (s.done || 0) && Date.now() - sentAt < 15000);
+  const can = live && s.remote && inBattle && !busy;
+  return {d, s, enc, lead, live, inBattle, busy, can};
+}
+
+function actingText(acting, lead, moves) {
+  let m;
+  if ((m = acting.match(/^Throwing an? (.+)/))) return `You threw a\n${UP(m[1])}!`;
+  if ((m = acting.match(/^Using an? (.+)/))) return `You used a\n${UP(m[1])}!`;
+  if ((m = acting.match(/^Using (.+)/))) return `${UP(lead.name || "Your POKéMON")} used\n${UP(m[1])}!`;
+  if (/^Running/.test(acting)) return "";
+  if (/^Reading your moves/.test(acting)) return "HUNT is reading\nyour moves…";
+  return acting + "…";
+}
+
+function render() {
+  const f = facts();
+  if (!f) return;
+  const {d, s, enc, lead, live, inBattle, busy, can} = f;
+  if (view === "ctl" ? !live || (s.remote && inBattle) : !can && view !== "main") view = "main";
+  if (controlSent && (s.remote === (controlSent === "takeover") || !live)) controlSent = "";
+  if (s.acting || (s.done || 0) >= sent) pending = "";
+  const LEAD = UP(lead.name || "your POKéMON"), SP = UP(enc.species);
+
+  // a new encounter opens the way the game's do
+  const key = inBattle ? `${d.id}:${s.count}:${enc.species}` : "";
+  const fresh = key && key !== seen.key;
+  const caught = !inBattle && /caught/i.test(s.msg || "") && seen.species && seen.device === d.id;
+  if (fresh) {
+    seen = {key, species: enc.species, device: d.id, msg: s.msg || "", at: Date.now()};
+    view = "main";
+    if (s.remote) {  // your battle: the whole opening, as in the game
+      const scr = $("battle");
+      scr.classList.remove("intro"); void scr.offsetWidth; scr.classList.add("intro");
+      setTimeout(() => scr.classList.remove("intro"), 2300);
+      playSeq([
+        `Wild ${SP} appeared!`,
+        enc.shiny && "Whoa! It's a shiny one!",
+        enc.gradient && `It has the ${UP(enc.gradient)}\ngradient!`,
+        enc.reskin && `It's the ${UP(enc.reskin)}\nreskin!`,
+        enc.tint && "It's tinted!",
+        s.wanted && "HUNT wanted this one!",
+        lead.name && `Go! ${LEAD}!`,
+      ]);
+      if (enc.shiny) setTimeout(sparkle, 1500);
+    } else {  // HUNT's battles are over in a second or two: just say what it met
+      seq = null;
+      $("battle").classList.remove("intro");
+    }
+  } else if (inBattle && (s.msg || "") !== seen.msg) {
+    seen.msg = s.msg || "";
+    if (s.msg) playSeq(chunks(s.msg));
+  } else if (!inBattle && !caught && seen.key) {
+    seen.key = "";
+  }
+
+  // while HUNT hunts, the last Pokemon it met stays on screen until the next one
+  const keep = live && !s.remote && !!enc.species;
+  if (lead.name) lastLead[d.id] = lead;
+  drawFoe(d, s, enc, inBattle || keep, caught);
+  drawLead(lead.name || lead.max ? lead : keep ? lastLead[d.id] || {} : lead, inBattle || caught || keep);
+  drawBall(s, inBattle, caught);
+
+  // the text box, and which window sits beside it
+  const line = seqLine();
+  let text, side = null;  // side: act, yesno
+  if (!d.online) text = s.hunting === false ? "HUNT isn't hunting on\nthis device right now." : "Device offline. HUNT\nconnects while hunting.";
+  else if (!s.hunting) text = "HUNT isn't hunting on\nthis device right now.";
+  else if (line) text = line;
+  else if (s.error) text = s.error;
+  else if (s.acting) text = actingText(s.acting, lead, s.moves || []);
+  else if (pending) text = pending;
+  else if (busy || controlSent) text = "…";
+  else if (view === "ctl") {
+    text = s.remote ? "Let HUNT do the battles\nagain?" : "Take over from HUNT?\nIt will wait for you.";
+    side = "yesno";
+  }
+  else if (inBattle && s.remote && view === "run") { text = "Run from this\nbattle?"; side = "yesno"; }
+  else if (inBattle && s.remote) { text = `What will\n${LEAD} do?`; side = view === "main" ? "act" : null; }
+  else if (keep) text = `Last encountered\n${SP}${enc.level ? ` \uE000${enc.level}` : ""}`;
+  else if (caught) text = `Gotcha!\n${UP(seen.species)} was caught!`;
+  else {
+    const after = {"got away": "Got away safely!", "the battle is over": "The battle is over."}[s.msg] || (s.msg ? s.msg : "");
+    text = after ? after + (s.remote ? "\nHUNT holds the next one." : "\nHUNT keeps searching…")
+                 : s.remote ? "Searching the grass…\nHUNT will wait for you." : "HUNT is searching\nthe tall grass…";
+  }
+  const menuOpen = panel && panel !== "bag";  // the START menu and its pages talk in the text box themselves
+  // not your battle: TAKE OVER / RESUME and MENU sit beside the text
+  if (!side && !panel && view === "main" && !(s.remote && inBattle) && !s.acting && !pending && !busy) side = "cmd";
+  if (panel) side = null;
+  const fighting = view === "fight" && can && !line && !panel;
+  $("msgframe").classList.toggle("half", side === "act");
+  $("msgframe").classList.toggle("wide", side === "cmd");
+  if (!menuOpen) say($("msgtext"), fighting ? "" : text);
+  $("more").hidden = menuOpen || !line;
+  $("msgframe").parentElement.hidden = fighting;
+
+  drawAct(side === "act" && can, s);
+  drawCmd(side === "cmd", f);
+  drawMoves(fighting ? s.moves || [] : null);
+  drawYesNo(side === "yesno");
+  const bob = side === "act" || fighting;
+  $("lead-hb").classList.toggle("bob", bob);
+
+  if (panel === "bag") { if (live && s.remote && inBattle) drawBag(f); else closePanels(); }
+  if (panel === "menu") drawStartMenu(f);
+  if (["devices", "screen", "log"].includes(panel)) drawPage(f);
+}
+
+function drawFoe(d, s, enc, inBattle, caught) {
+  const box = $("foe-hb"), foe = $("foe");
+  box.hidden = !(inBattle || caught);
+  if (!inBattle && !caught) { setMon(foe, "", 0, 0); return; }
+  if (!inBattle) return;
+  $("foe-name").textContent = UP(enc.species);
+  $("foe-lv").textContent = enc.level ? `\uE000${enc.level}` : "";
+  const st = $("foe-status");
+  const STATUS = {PAR: "#c8a000", PSN: "#a040a0", TOX: "#a040a0", BRN: "#e05030", SLP: "#8890a0", FRZ: "#58b8d8"};
+  const code = String(enc.status || "").toUpperCase().slice(0, 3);
+  st.hidden = !code;
+  st.textContent = code;
+  st.style.background = STATUS[code] || "#888";
+  // the game's own sprite (shiny, gradient, reskin); the plain one if it doesn't come
+  const game = gameSprite(d, s, enc);
+  if (game.url) setMon(foe, game.url, 176, 70);
+  else if (game.loading || Date.now() - (seen.at || 0) < 1500) {
+    if (s.remote) setMon(foe, "", 0, 0);  // while HUNT hunts, the last one stays up until this one's ready
+    foeWait = foeWait || setTimeout(() => { foeWait = 0; render(); }, 300);
+  }
+  else setMon(foe, sprite(enc.shiny ? "front-shiny" : "front", monId(enc.species)), 176, 70);
+}
+
+// The device sends the 96 x 96 sprite area as the game drew it (background and
+// all); the species' own Gen 5 sprite, which the game uses, gives its shape.
+let gameCut = {key: "", url: null, loading: false};
+let foeWait = 0;
+function gameSprite(d, s, enc) {
+  const sp = d.sprite;
+  if (!sp || sp.count !== s.count || monId(sp.species) !== monId(enc.species)) return {};
+  const key = `${d.id}:${sp.count}:${sp.species}`;
+  if (gameCut.key === key) return gameCut;
+  if (gameCut.url) URL.revokeObjectURL(gameCut.url);
+  const cut = gameCut = {key, url: null, loading: true};
+  const load = src => new Promise((ok, fail) => { const i = new Image(); i.onload = () => ok(i); i.onerror = fail; i.src = src; });
+  Promise.all([load(`/api/devices/${encodeURIComponent(d.id)}/sprite?c=${sp.count}`), load(sprite("front", monId(sp.species)))])
+    .then(([area, shape]) => {
+      const c = document.createElement("canvas");
+      c.width = c.height = 96;
+      const g = c.getContext("2d", {willReadFrequently: true});
+      g.imageSmoothingEnabled = false;
+      g.drawImage(shape, 0, 0, 96, 96);
+      const mask = g.getImageData(0, 0, 96, 96).data;
+      g.clearRect(0, 0, 96, 96);
+      g.drawImage(area, 0, 0, 96, 96);
+      const px = g.getImageData(0, 0, 96, 96);
+      for (let i = 3; i < px.data.length; i += 4) px.data[i] = mask[i] > 128 ? 255 : 0;
+      g.putImageData(px, 0, 0);
+      return new Promise(ok => c.toBlob(ok, "image/png"));
+    })
+    .then(blob => { if (gameCut === cut) cut.url = URL.createObjectURL(blob); })
+    .catch(() => {})
+    .finally(() => { cut.loading = false; render(); });
+  return cut;
+}
+
+function drawLead(lead, show) {
+  const box = $("lead-hb"), img = $("lead");
+  const has = show && !!(lead.name || lead.max);
+  box.hidden = !has;
+  if (!has) { setMon(img, "", 0, 0); return; }
+  $("lead-name").textContent = UP(lead.name || "?");
+  $("lead-lv").textContent = lead.level != null ? `\uE000${lead.level}` : "";
+  const pct = lead.max ? Math.max(0, Math.min(1, lead.hp / lead.max)) : 1;
+  const bar = $("lead-bar");
+  bar.querySelector("b").style.width = Math.round(47 * pct) + "px";
+  bar.classList.toggle("mid", pct <= .5 && pct > .2);
+  bar.classList.toggle("low", pct <= .2);
+  $("lead-hpnum").textContent = lead.max ? `${String(lead.hp ?? "?").padStart(3)}/${String(lead.max).padStart(3)}` : "";
+  setMon(img, sprite("back", monId(lead.name)), 72, 114);
+}
+
+function drawBall(s, inBattle, caught) {
+  const ball = $("ball"), foe = $("foe");
+  const throwing = inBattle && /^Throwing/.test(s.acting || "");
+  if (throwing && lastActing !== s.acting) {
+    ball.hidden = false;
+    ball.className = "ball"; void ball.offsetWidth; ball.className = "ball throw";
+    setTimeout(() => {
+      if (!ball.classList.contains("throw")) return;
+      foe.classList.add("absorbed");
+      ball.className = "ball rest shake";
+    }, 560);
+  } else if (caught) {
+    ball.hidden = false; ball.className = "ball rest caught";
+    if (!foe.classList.contains("out")) { foe.classList.add("out"); stars(); }
+  } else if (!throwing) {
+    ball.hidden = true; ball.className = "ball";
+    foe.classList.remove("absorbed", "out");
+  }
+  // a move used: the wild one flickers as it's hit
+  if (inBattle && /^Using (?!an? )/.test(s.acting || "") && lastActing !== s.acting) {
+    setTimeout(() => { foe.classList.remove("hit"); void foe.offsetWidth; foe.classList.add("hit"); }, 700);
+  }
+  lastActing = s.acting || "";
+}
+
+function sparkle() { stars(176, 40, 10, 22); }
+function stars(cx = 176, cy = 62, n = 6, r = 12) {
+  const box = $("stars");
+  box.style.left = cx + "px"; box.style.top = cy + "px";
+  box.innerHTML = Array.from({length: n}, (_, i) => {
+    const a = i / n * Math.PI * 2;
+    return `<i style="left:${Math.round(Math.cos(a) * r) - 3}px;top:${Math.round(Math.sin(a) * r * .8) - 3}px;animation-delay:${i * 90}ms">${STAR}</i>`;
+  }).join("");
+  setTimeout(() => { box.innerHTML = ""; }, 1800);
+}
+
+// ---------------------------------------------------------------- the menus
+
+function opt(kind, i, label, x, y, w, disabled) {
+  return `<button class="opt ${cur[kind] === i ? "on" : ""}" data-pick="${kind}:${i}" style="left:${x}px;top:${y}px;width:${w}px"
+            ${disabled ? "disabled" : ""}><span class="cur">${CURSOR}</span><span>${label}</span></button>`;
+}
+function setHtml(el, html) {
+  if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; }
+}
+
+// POKéMON can't be done from the website: its place opens the menu
+const ACTS = ["FIGHT", "BAG", "MENU", "RUN"];
+function cmdItems(f) {
+  return (f.live ? [[f.s.remote ? "RESUME" : "TAKE OVER", "control"]] : []).concat([["MENU", "menu"]]);
+}
+function drawCmd(show, f) {
+  $("cmd").hidden = !show;
+  if (!show) return;
+  const items = cmdItems(f);
+  cur.cmd = Math.min(cur.cmd, items.length - 1);
+  setHtml($("cmd"), items.map(([label], i) => opt("cmd", i, label, 9, 9 + i * 16, 72)).join(""));
+}
+
+function drawAct(show, s) {
+  $("act").hidden = !show;
+  if (!show) return;
+  setHtml($("act"), ACTS.map((a, i) => opt("act", i, a, 9 + (i % 2) * 56, 9 + (i >> 1) * 16, i % 2 ? 46 : 56,
+                                           i === 0 && !(s.moves || []).length)).join(""));
+}
+
+function drawMoves(moves) {
+  $("moves").hidden = $("ppbox").hidden = !moves;
+  if (!moves) return;
+  cur.move = Math.min(cur.move, Math.max(0, moves.length - 1));
+  setHtml($("moves"), [0, 1, 2, 3].map(i => {
+    const m = moves[i];
+    return m ? opt("move", i, esc(UP(m.name)), 9 + (i % 2) * 72, 9 + (i >> 1) * 16, 72).replace('class="opt', `class="opt${m.name.length > 9 ? " long" : ""}`)
+             : `<span class="opt" style="left:${9 + (i % 2) * 72}px;top:${9 + (i >> 1) * 16}px"><span>-</span></span>`;
+  }).join(""));
+  const m = moves[cur.move] || {};
+  const info = infoFor(m.name) || {};
+  const pp = $("pp");
+  pp.textContent = `${m.pp ?? "?"}/${m.max ?? "?"}`;
+  pp.className = m.pp === 0 ? "pp-none" : m.max && m.pp <= m.max / 4 ? "pp-low" : m.max && m.pp <= m.max / 2 ? "pp-half" : "";
+  $("ptype").textContent = `TYPE/${UP(info.type || "???")}`;
+}
+
+function drawYesNo(show) {
+  $("yesno").hidden = !show;
+  if (show) setHtml($("yesno"), opt("yes", 0, "YES", 9, 6, 40) + opt("yes", 1, "NO", 9, 22, 40));
+}
+
+// the bag: Emerald's, with two pockets
+const POCKETS = [["items", "ITEMS"], ["balls", "POKé BALLS"]];
+let pocket = 1;
+function bagRows(f) {
+  const {s, lead, enc} = f;
+  if (POCKETS[pocket][0] === "balls")
+    return (s.balls || []).map(b => ({cmd: "ball", name: b, label: UP(b), icon: itemId(b),
+      desc: `Throw it at the wild\n${UP(enc.species)}.`}));
+  return [
+    {cmd: "heal", label: UP(s.heal_item || "Restore HP"), icon: itemId(s.heal_item), desc: `Restores ${UP(lead.name || "your POKéMON")}'s\nHP.`},
+    {cmd: "pp", label: UP(s.pp_item || "Restore PP"), icon: itemId(s.pp_item), desc: `Restores the PP of\n${UP(lead.name || "your POKéMON")}'s moves.`},
+  ];
+}
+function drawBag(f) {
+  const rows = bagRows(f);
+  const n = rows.length + 1;  // and CLOSE BAG
+  cur.bag = Math.min(cur.bag, n - 1);
+  $("bag-pocket").textContent = POCKETS[pocket][1];
+  $("bag-dots").innerHTML = POCKETS.map((_, i) => `<i class="${i === pocket ? "on" : ""}"></i>`).join("");
+  setHtml($("bag-list"), rows.map((r, i) =>
+    `<button class="row ${cur.bag === i ? "on" : ""}" data-pick="bag:${i}" style="top:${18 + i * 16}px" ${f.busy ? "disabled" : ""}>
+       <span class="cur">${CURSOR}</span><span>${esc(r.label)}</span></button>`).join("") +
+    `<button class="row ${cur.bag === n - 1 ? "on" : ""}" data-pick="bag:${n - 1}" style="top:${18 + (n - 1) * 16}px">
+       <span class="cur">${CURSOR}</span><span>CLOSE BAG</span></button>`);
+  const r = rows[cur.bag];
+  $("bag-desc").textContent = r ? r.desc : "Close the BAG and go\nback to the battle.";
+  const icon = $("bag-icon");
+  const src = r && r.icon ? sprite("item", r.icon) : "";
+  if (icon.dataset.src !== src) {
+    icon.dataset.src = src;
+    icon.style.visibility = "hidden";
+    if (src) { icon.onload = () => { icon.style.visibility = "visible"; }; icon.src = src; }
+  }
+  if (!$("bag-pic").innerHTML) $("bag-pic").innerHTML = pix([
+    "....kkkkkk....", "...k......k...", "..kkkkkkkkkk..", ".kggggggggggk.", "kggggyyggggggk", "kggggyyggggggk",
+    "kkkkkkkkkkkkkk", "kggggggggggggk", "kgggkkkkkgggk.", "kgggkyyykgggk.", "kgggkkkkkgggk.", "kggggggggggggk",
+    "kggggggggggggk", ".kggggggggggk.", "..kkkkkkkkkk.."].map(r => r.padEnd(14, ".")), {k: "#293941", g: "#d58b39", y: "#ffe68b"})
+    .replace("<svg ", '<svg style="width:42px;height:45px" ');
+}
+
+// START: what you'd find in the game's menu, for Hunt: [key, label, what the text box says]
+function menuItems() {
+  const f = facts();
+  const items = [];
+  if (f && f.live) items.push(f.s.remote ? ["control", "RESUME", "Let HUNT do the battles\nagain."]
+                                         : ["control", "TAKE OVER", "Battle yourself: HUNT waits\nfor you in each battle."]);
+  const d = f && f.d;
+  items.push(["devices", "DEVICES", d ? `${UP(d.label || "Device").slice(0, 24)}\n${status(d, d.state || {})}` +
+                                        (d.state && d.state.count != null ? ` · ${d.state.count} SEEN` : "") : "Your devices."]);
+  items.push(["screen", "SCREEN", "The latest picture from\nthe device's screen."]);
+  items.push(["log", "LOG", "What HUNT has been\ndoing lately."]);
+  if (document.fullscreenEnabled)
+    items.push(document.fullscreenElement ? ["full", "WINDOW", "Leave full screen."] : ["full", "FULL SCREEN", "Fill the whole screen."]);
+  items.push(["logout", "LOG OUT", "Log this browser out\nof every device."]);
+  items.push(["exit", "EXIT", "Close this menu."]);
+  return items;
+}
+function drawStartMenu() {
+  const items = menuItems();
+  cur.menu = Math.min(cur.menu, items.length - 1);
+  const m = $("startmenu");
+  m.style.height = items.length * 14 + 12 + "px";
+  setHtml(m, items.map(([, label], i) =>
+    `<button class="opt ${cur.menu === i ? "on" : ""}" data-pick="menu:${i}" style="left:9px;top:${6 + i * 14}px;width:76px">
+       <span class="cur">${CURSOR}</span><span>${label}</span></button>`).join(""));
+  say($("msgtext"), items[cur.menu][2]);
+}
+
+let shotUrl = null, shotFor = "";
+async function loadShot(d) {
+  const key = `${d.id}:${d.shot}`;
+  if (key === shotFor) return;
+  shotFor = key;
+  const r = await fetch(`/api/devices/${encodeURIComponent(d.id)}/shot`).catch(() => null);
+  if (!r || !r.ok || shotFor !== key) return;
+  const url = URL.createObjectURL(await r.blob());
+  if (shotUrl) URL.revokeObjectURL(shotUrl);
+  shotUrl = url;
+  render();
+}
+
+function drawPage(f) {
+  const {d, s, live} = f;
+  let title = "", body = "", note = "";
+  if (panel === "devices") {
+    title = "DEVICES";
+    cur.page = Math.min(cur.page, devices.length + 2);
+    const row = (i, html) => `<button class="row ${cur.page === i ? "on" : ""}" data-pick="page:${i}">
+             <span class="cur">${CURSOR}</span><span>${html}</span></button>`;
+    body = devices.map((v, i) => row(i, `<span class="led ${v.online ? "on" : ""}"></span>${esc(UP(v.label || "Device"))}
+             <small>${v.id === current ? "PLAYING" : status(v, v.state || {})}</small>`)).join("") +
+           row(devices.length, "ADD A DEVICE") + row(devices.length + 1, "REMOVE THIS ONE") + row(devices.length + 2, "CANCEL");
+    note = cur.page === devices.length ? "Log in to another device\nwith its code."
+         : cur.page === devices.length + 1 ? "Forget this device on\nthis browser."
+         : cur.page === devices.length + 2 ? "Back to the menu."
+         : "Choose a device to\nwatch and battle on.";
+  } else if (panel === "screen") {
+    title = "SCREEN";
+    if (d.shot) loadShot(d);
+    const fresh = live && s.remote && s.phase === "battle";
+    body = (fresh ? `<button class="row on" data-pick="shot:0"><span class="cur">${CURSOR}</span><span>NEW PICTURE</span></button>` : "") +
+           (d.shot && shotUrl && shotFor.startsWith(d.id + ":") ? `<img class="shot" src="${shotUrl}" alt="The game, after the last turn">` : "");
+    note = !d.shot ? "No picture yet. HUNT sends\none each turn you play." : "The game after the\nlast turn.";
+  } else if (panel === "log") {
+    title = "LOG";
+    body = `<pre class="log">${esc((s.log || []).join("\n") || "Nothing yet.")}</pre>`;
+    note = "What HUNT has been\ndoing lately.";
+  }
+  $("page-title").textContent = title;
+  setHtml($("page-body"), body);
+  say($("msgtext"), note);
+}
+
+function openPanel(name) {
+  panel = name;
+  $("bag").hidden = name !== "bag";
+  $("startmenu").hidden = name !== "menu";
+  $("page").hidden = !["devices", "screen", "log"].includes(name);
+  if (name === "devices") cur.page = Math.max(0, devices.findIndex(v => v.id === current));
+  if (name === "bag") cur.bag = 0;
+  render();
+}
+function closePanels() {
+  panel = null;
+  $("bag").hidden = $("startmenu").hidden = $("page").hidden = true;
+  render();
+}
+
+// ---------------------------------------------------------------- A, B, START and the arrows
+
+function choose(kind, i) {
+  const f = facts();
+  if (!f) return;
+  if (kind === "act") {
+    if (!f.can) return;
+    if (i === 0) { view = "fight"; cur.move = 0; }
+    else if (i === 1) openPanel("bag");
+    else if (i === 2) { cur.menu = 0; openPanel("menu"); }
+    else { view = "run"; cur.yes = 1; }
+    render();
+  } else if (kind === "shot") {
+    send({cmd: "shot"});
+  } else if (kind === "cmd") {
+    const what = (cmdItems(f)[i] || [])[1];
+    if (what === "control") send({cmd: f.s.remote ? "resume" : "takeover"});
+    else if (what === "menu") { cur.menu = 0; openPanel("menu"); }
+  } else if (kind === "move") {
+    const m = (f.s.moves || [])[i];
+    if (!m || !f.can) return;
+    if (m.pp === 0) { playSeq(["There's no PP left for\nthis move!"]); return; }
+    send({cmd: "move", name: m.name}, `${UP(f.lead.name || "your POKéMON")} used\n${UP(m.name)}!`);
+  } else if (kind === "yes") {
+    if (i === 1) { view = "main"; render(); }
+    else if (view === "ctl") send({cmd: f.s.remote ? "resume" : "takeover"});
+    else send({cmd: "run"}, "");
+  } else if (kind === "bag") {
+    const rows = bagRows(f);
+    const r = rows[i];
+    if (!r) { closePanels(); return; }
+    if (f.busy) return;
+    closePanels();
+    send(r.name ? {cmd: r.cmd, name: r.name} : {cmd: r.cmd},
+         r.cmd === "ball" ? `You threw a\n${r.label}!` : `You used a\n${r.label}!`);
+  } else if (kind === "menu") {
+    const m = (menuItems()[i] || [])[0];
+    if (m === "control") { closePanels(); send({cmd: f.s.remote ? "resume" : "takeover"}); }
+    else if (["devices", "screen", "log"].includes(m)) openPanel(m);
+    else if (m === "full") {
+      (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {});
+      closePanels();
+    }
+    else if (m === "logout") logout();
+    else closePanels();
+  } else if (kind === "page") {
+    if (panel !== "devices") return;
+    if (devices[i]) {
+      current = devices[i].id;
+      view = "main"; seen.key = "";
+      closePanels();
+    } else if (i === devices.length) startLogin();
+    else if (i === devices.length + 1) forget();
+    else openPanel("menu");
+  }
+}
+
+function pressA() {
+  if (!$("login").hidden) { login(); return; }
+  if (panel === "menu") return choose("menu", cur.menu);
+  if (panel === "bag") return choose("bag", cur.bag);
+  if (panel === "devices") return choose("page", cur.page);
+  if (panel === "screen") { const f = facts(); if (f && f.live && f.s.remote && f.s.phase === "battle") send({cmd: "shot"}); return; }
+  if (panel) return;
+  if (skipSeq()) return;
+  if (!$("yesno").hidden) return choose("yes", cur.yes);
+  if (!$("moves").hidden) return choose("move", cur.move);
+  if (!$("act").hidden) return choose("act", cur.act);
+  if (!$("cmd").hidden) return choose("cmd", cur.cmd);
+  askControl();
+}
+function askControl() {
+  const f = facts();
+  if (!f || !f.live || panel || view !== "main" || (f.s.remote && f.inBattle) || controlSent) return;
+  view = "ctl";
+  cur.yes = f.s.remote ? 1 : 0;
+  render();
+}
+function pressB() {
+  if (!$("login").hidden) { if (devices.length) show("battle"), render(); return; }
+  if (["devices", "screen", "log"].includes(panel)) return openPanel("menu");
+  if (panel) return closePanels();
+  if (view !== "main") { view = "main"; render(); }
+}
+function pressStart() {
+  if (!$("login").hidden) return;
+  if (panel === "menu") closePanels(); else { cur.menu = 0; openPanel("menu"); }
+}
+function arrow(dx, dy) {
+  const move2x2 = (k, n) => {
+    let i = cur[k];
+    if (dx) i = (i % 2 === 0 && dx > 0) || (i % 2 === 1 && dx < 0) ? i + dx : i;
+    if (dy) i = (i < 2 && dy > 0) || (i >= 2 && dy < 0) ? i + 2 * dy : i;
+    if (i >= 0 && i < n) cur[k] = i;
+  };
+  const f = facts();
+  if (panel === "menu") { const n = menuItems().length; cur.menu = (cur.menu + dy + n) % n; }
+  else if (panel === "bag") {
+    if (dx) { pocket = (pocket + dx + POCKETS.length) % POCKETS.length; cur.bag = 0; }
+    else if (f) cur.bag = Math.max(0, Math.min(bagRows(f).length, cur.bag + dy));
+  } else if (panel === "devices") cur.page = Math.max(0, Math.min(devices.length + 2, cur.page + dy));
+  else if (!$("yesno").hidden) { if (dy) cur.yes = dy > 0 ? 1 : 0; }
+  else if (!$("moves").hidden) move2x2("move", ((f && f.s.moves) || []).length);
+  else if (!$("act").hidden) move2x2("act", 4);
+  else if (!$("cmd").hidden && dy) { const f2 = facts(); if (f2) cur.cmd = Math.max(0, Math.min(cmdItems(f2).length - 1, cur.cmd + dy)); }
+  render();
+}
+
+document.addEventListener("keydown", e => {
+  if (e.target === $("code")) {
+    if (e.key === "Enter") login();
+    return;
+  }
+  const k = e.key.toLowerCase();
+  const keys = {arrowup: () => arrow(0, -1), arrowdown: () => arrow(0, 1), arrowleft: () => arrow(-1, 0), arrowright: () => arrow(1, 0),
+                enter: pressA, z: pressA, " ": pressA, x: pressB, escape: pressB, backspace: pressB, s: pressStart};
+  if (keys[k]) { e.preventDefault(); keys[k](); }
+});
+$("msgframe").onclick = () => { if (Date.now() - backedAt > 600) skipSeq() || askControl(); };
+// tapping outside the open window goes back (B)
+let backedAt = 0;
+$("app").addEventListener("pointerdown", e => {
+  if (e.button !== 0 || !$("login").hidden || !(panel || view !== "main")) return;
+  if (e.target.closest("[data-pick], [data-pocket], .win, .baglist, .banner")) return;
+  backedAt = Date.now();
+  pressB();
+});
+// right click is B
+$("app").addEventListener("contextmenu", e => { e.preventDefault(); pressB(); });
+$("bag").addEventListener("click", e => {
+  const b = e.target.closest("[data-pocket]");
+  if (b) { pocket = (pocket + Number(b.dataset.pocket) + POCKETS.length) % POCKETS.length; cur.bag = 0; render(); }
+});
+
+// tapping: menus choose at once; moves and bag items take a second tap (the first points the cursor)
+// (on press, not release: a redraw between the two can't lose the tap)
+let pickedAt = 0;
+function pick(e) {
+  const b = e.target.closest("[data-pick]");
+  if (!b || b.disabled) return;
+  if (e.type === "pointerdown") {
+    if (e.button !== 0 || (b.closest(".page .body") && e.pointerType !== "mouse")) return;  // lists scroll: those go on click
+    e.preventDefault();
+    pickedAt = Date.now();
+  } else if (Date.now() - pickedAt < 800) return;  // the same tap's click
+  const [kind, n] = b.dataset.pick.split(":"), i = Number(n);
+  if ((kind === "move" || kind === "bag" || kind === "page") && cur[kind] !== i) { cur[kind] = i; render(); return; }
+  cur[kind] = i;
+  choose(kind, i);
+}
+document.addEventListener("pointerdown", pick);
+document.addEventListener("click", pick);
+document.addEventListener("pointerover", e => {
+  if (e.pointerType !== "mouse") return;
+  const b = e.target.closest("[data-pick]");
+  if (!b || b.disabled) return;
+  const [kind, n] = b.dataset.pick.split(":");
+  if (cur[kind] !== Number(n)) { cur[kind] = Number(n); render(); }
+});
+
+async function send(data, say_ = null) {
+  const f = facts();
+  if (!f) return;
+  view = "main";
+  try {
+    const r = await api(`/devices/${f.d.id}/command`, data);
+    if (data.cmd === "takeover" || data.cmd === "resume") controlSent = data.cmd;
+    else if (data.cmd !== "shot") {
+      sent = r.seq; sentAt = Date.now();
+      if (say_ !== null) pending = say_;
+      setTimeout(render, 15100);
+    }
+  } catch (e) {
+    playSeq([e.message]);
+  }
+  render();
+}
+
+load().catch(() => startLogin());
+</script>
+</body>
+</html>

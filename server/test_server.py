@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""Checks the website's rules with pretend devices and browsers:
+
+    python server/test_server.py
+"""
+import asyncio
+import os
+import secrets
+import sys
+import tempfile
+
+from aiohttp.test_utils import TestClient, TestServer
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import hunt_server  # noqa: E402
+
+async def browser(server):
+    c = TestClient(server)
+    await c.start_server()
+    return c
+
+
+async def main():
+    db = tempfile.mktemp(suffix=".db")
+    app = hunt_server.make_app(db, secure=False)
+    server = TestServer(app)
+    await server.start_server()
+
+    async def new_device():
+        c = TestClient(server)
+        await c.start_server()
+        c.session.headers["Authorization"] = "Bearer " + secrets.token_urlsafe(32)
+        r = await c.post("/api/device/start", json={"label": "Phone", "kind": "test", "build": "1"})
+        assert r.status == 200
+        return c, (await r.json())["code"]
+
+    mine, code = await new_device()
+    theirs, their_code = await new_device()
+    assert code != their_code and len(code) == 6
+
+    me = await browser(server)
+    assert (await me.get("/api/me")).status == 401                            # not logged in
+    assert (await me.post("/api/login", json={"code": "ZZZZZZ"})).status == 404  # no such code
+
+    # a new code (asked for on the device) replaces the old one
+    old, code = code, (await (await mine.post("/api/device/code")).json())["code"]
+    assert (await me.post("/api/login", json={"code": old})).status == 404
+
+    # the code logs in (any case, any spacing), and works once
+    r = await me.post("/api/login", json={"code": f" {code[:3].lower()} {code[3:]}"})
+    assert r.status == 200, await r.text()
+    device_id = (await r.json())["device"]
+    assert (await me.post("/api/login", json={"code": code})).status == 404
+    assert [d["id"] for d in (await (await me.get("/api/me")).json())["devices"]] == [device_id]
+    poll = await (await mine.get("/api/device/poll")).json()
+    assert poll["commands"][0]["result"] == "ok"  # the device is told
+
+    # the other person logs in to theirs and sees only theirs
+    them = await browser(server)
+    r = await them.post("/api/login", json={"code": their_code})
+    assert r.status == 200
+    their_id = (await r.json())["device"]
+    assert [d["id"] for d in (await (await them.get("/api/me")).json())["devices"]] == [their_id]
+    # ... and can't touch mine
+    online = asyncio.create_task(mine.get("/api/device/poll"))  # mine is online, waiting for commands
+    await asyncio.sleep(0.05)
+    assert (await them.post(f"/api/devices/{device_id}/command", json={"cmd": "takeover"})).status == 404
+    assert (await them.get(f"/api/devices/{device_id}/shot")).status == 404
+    assert (await them.post(f"/api/devices/{device_id}/forget", json={})).status == 404
+    # nor can a browser without a session, or a device key on the page's API
+    anon = await browser(server)
+    assert (await anon.post(f"/api/devices/{device_id}/command", json={"cmd": "takeover"})).status == 401
+    assert (await mine.get("/api/me")).status == 401
+    # pictures and moves are for logged-in browsers, and only names that look like names
+    assert (await anon.get("/api/sprite/front/dewpider")).status == 401
+    assert (await anon.get("/api/move/yawn")).status == 401
+    assert (await me.get("/api/sprite/secret/dewpider")).status == 404
+    assert (await me.get("/api/sprite/front/..%2Fetc")).status == 404
+    assert (await me.get("/api/move/Yawn!")).status == 404
+
+    # commands: only known ones, balls and moves the device offers, same origin only
+    await mine.post("/api/device/state", json={"hunting": True, "balls": ["Timer Ball"],
+                                               "moves": [{"name": "Yawn", "pp": 10, "max": 10}]})
+    url = f"/api/devices/{device_id}/command"
+    assert (await me.post(url, json={"cmd": "takeover"})).status == 200
+    assert (await me.post(url, json={"cmd": "ball", "name": "Master Ball"})).status == 400
+    assert (await me.post(url, json={"cmd": "move", "name": "Yawn"})).status == 200
+    assert (await me.post(url, json={"cmd": "tap", "x": 1})).status == 400
+    assert (await me.post(url, json={"cmd": "run"}, headers={"Origin": "https://evil.example"})).status == 403
+    got = (await (await online).json())["commands"] + (await (await mine.get("/api/device/poll")).json())["commands"]
+    assert [c["cmd"] for c in got] == ["takeover", "move"], got
+
+    # a picture reaches its owner only
+    jpg = b"\xff\xd8" + b"0" * 100
+    assert (await mine.post("/api/device/shot", data=jpg, headers={"Content-Type": "image/jpeg"})).status == 200
+    assert await (await me.get(f"/api/devices/{device_id}/shot")).read() == jpg
+    assert (await mine.post("/api/device/shot", data=b"<html>")).status == 400
+
+    # the wild Pokemon's sprite: PNGs only, to its owner only
+    import base64
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 100
+    assert (await mine.post("/api/device/sprite", json={"count": 3, "species": "Dewpider",
+                                                         "png": base64.b64encode(png).decode()})).status == 200
+    assert await (await me.get(f"/api/devices/{device_id}/sprite")).read() == png
+    assert (await them.get(f"/api/devices/{device_id}/sprite")).status == 404
+    assert (await mine.post("/api/device/sprite", json={"png": base64.b64encode(b"<svg>").decode()})).status == 400
+    assert (await mine.post("/api/device/sprite", json={"png": "not base64!"})).status == 400
+    view = (await (await me.get("/api/me")).json())["devices"][0]
+    assert view["sprite"] == {"count": 3, "species": "Dewpider"}, view
+
+    # wrong codes are limited
+    hits = [(await anon.post("/api/login", json={"code": "AAAAAA"}, headers={"X-Real-IP": "10.0.0.9"})).status
+            for _ in range(12)]
+    assert hits[-1] == 429, hits
+
+    # stopping spends the code
+    code = (await (await theirs.post("/api/device/start", json={})).json())["code"]
+    await theirs.post("/api/device/stop")
+    assert (await me.post("/api/login", json={"code": code})).status == 404
+
+    # the device logs every browser out of itself
+    await theirs.post("/api/device/logout")
+    assert (await (await them.get("/api/me")).json())["devices"] == []
+    assert (await them.get(f"/api/devices/{their_id}/shot")).status == 404
+
+    # logging out ends the session
+    await me.post("/api/logout", json={})
+    assert (await me.get("/api/me")).status == 401
+
+    print("all good")
+    for c in (mine, theirs, me, them, anon):
+        await c.close()
+    await server.close()
+    os.remove(db)
+
+
+asyncio.run(main())

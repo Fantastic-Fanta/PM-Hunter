@@ -1,0 +1,9 @@
+{
+  "name": "Hunt",
+  "short_name": "Hunt",
+  "start_url": "/app/",
+  "scope": "/app/",
+  "display": "fullscreen",
+  "background_color": "#000000",
+  "theme_color": "#000000"
+}

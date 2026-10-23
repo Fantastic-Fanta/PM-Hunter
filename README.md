@@ -1,0 +1,102 @@
+# PM-Hunter
+
+Copy `config.example.json` to `config.json` and put your Discord webhook in it.
+Builds that report to the debug channels (`make-windows-zip.sh`,
+`publish-android.sh`) read the addresses from `secrets.json`, which isn't in
+the repository: `{"windows_debug_webhook": "...", "android_debug_webhook": "..."}`.
+
+Hunts wild encounters in the Roblox Pokemon game: runs from the ones you don't
+want, catches the ones worth a ball, and pings Discord and holds the battle for
+you when a wanted one shows up. What's wanted is in `config.json`.
+
+The layout is fitted to each screen on its first encounter (auto-calibration),
+so any window size or phone shape works. It's refitted whenever a battle can't
+be read.
+
+## Mac
+
+Double-click `pokehunt.command`. Ctrl+Shift+H pauses and resumes.
+
+## Windows
+
+`./make-windows-zip.sh` packs a test build into `~/Downloads/pokehunt-windows.zip`
+(without your Discord webhook). On the PC: install Python from python.org
+(tick "Add python.exe to PATH"), unzip, then double-click **1 Check** (reads the
+samples, looks at the screen, moves the mouse a little, clicks nothing),
+**2 Watch only**, and finally **3 Hunt**. The first run sets itself up.
+
+Everything a Windows run prints, its errors, and screenshots of calibration,
+trouble, finds and the first 10 clicks go to the Windows debug channel
+(`debuglog.py`; `"debug_webhook"` in config.json changes it, `""` turns it off).
+Setup failures are uploaded by the launcher.
+
+Clicks go through Windows' `SendInput` with small relative mouse moves, the way
+a real mouse reaches Roblox. Text is read with Windows' own OCR. Keep Roblox on
+the main screen.
+
+## Android (just the phone, no computer)
+
+The app is in `android/`. `Hunt.apk` is the built copy.
+
+1. Put `Hunt.apk` on the phone (Google Drive, a USB cable, Discord, ...) and
+   open it. Allow installing from that app when Android asks.
+2. Open Hunt and tap **Turn on Hunt**, then switch Hunt on. If it's
+   greyed out, go to Settings > Apps > Hunt, tap ⋮ (top right) > **Allow
+   restricted settings**, and try again.
+3. Open **What to hunt**, paste your `config.json` (with your webhook) and tap
+   **Save**.
+4. Open Roblox. A small **OFF** button floats at the right whenever Roblox is
+   on screen: tap it to start hunting (it turns **ON**), tap again to stop. Drag
+   it out of the way if it covers something. **Start** in the app does the same.
+   Some Androids (emulators especially) give apps blank screenshots; then
+   Android asks "Start recording or casting with Hunt?": tap **Start now**,
+   it's how Hunt sees the game there.
+
+When it finds one, the phone vibrates and rings. It keeps the battle alive
+until you touch the screen.
+
+Needs Android 11 or newer. To find a ball, Full Restore or Max Elixir it
+scrolls through that tab of the bag; it doesn't use the search box on a phone,
+so leave that empty (a search left in it hides the other items).
+
+Under **More**: **Calibrate** draws the fitted layout on a
+picture in Pictures/Hunt, and **Share hunt log** sends what it did. Send
+me those and any `trouble` pictures if something goes wrong.
+
+## Website: watch and battle from anywhere
+
+https://poopihunt.xyz/app. Hunt gets a 6-character code each time it starts:
+the Android app shows it under the status (with **New code** and **Log out
+browsers** buttons), the Mac/Windows window prints it (Ctrl+Shift+N for a new
+one, Ctrl+Shift+L logs every browser out; it never goes to the debug
+channel). Type the code on the site and that browser is logged in for 30
+days. A code works once; the phone (or window) says when a browser logs in.
+Each browser sees only the devices it logged in with; **Add a device** logs
+in another one.
+
+**Take over** pauses the bot in whatever battle is on (or the next one): the
+page shows the encounter, a picture after every turn, your lead's HP, and
+buttons to throw a ball (`"web_balls"` in config.json, Timer and Repeat by
+default), use a move, Restore HP / PP (the catch plan's heal and PP items) or
+Run. **Resume hunting** hands it back. Started in the middle of a battle,
+Hunt leaves that battle to you and switches itself off. Watch only doesn't
+connect (it never clicks).
+
+The site is `server/hunt_server.py` (the API, as the `poopihunt` user, behind
+nginx's poopihunt.xyz site) and `site/app/index.html` (the page):
+`./publish-server.sh` updates both (`--setup` the first time).
+`server/test_server.py` checks its rules; `server/fake_device.py` is a
+pretend phone for trying the page.
+
+Updates: `./publish-android.sh` builds the app and publishes it on
+https://poopihunt.xyz (a download page, `Hunt.apk` and `version.json`;
+hunt.stingray-digital.online serves the same, for older builds). Every
+phone shows **Update** the next time Hunt opens (Android asks once to allow
+installs from Hunt). The bottom of the app says which build a phone has.
+poopihunt.xyz lives on the stingray server in its own folder
+(`/srv/poopihunt.xyz`, owner `poopihunt`, nginx site `poopihunt.xyz`, the API
+as the `poopihunt-api` service), apart from stingray-digital.online.
+
+Building it: `cd android && ./gradlew assembleDebug` (needs the Android SDK; the
+APK lands in `app/build/outputs/apk/debug/`). `./gradlew testDebugUnitTest`
+checks the screen reading against `samples/`.

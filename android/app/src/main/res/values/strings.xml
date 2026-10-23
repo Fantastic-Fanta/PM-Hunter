@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="service_description">Hunt takes screenshots of Roblox to read wild encounters and taps Run, Bag and Fight for you. It only acts while you have a hunt started in the Hunt app.</string>
+</resources>
