@@ -8,7 +8,7 @@ use crate::px::{Frame, Pt};
 use crate::reader::{self, bag_still, find_tab, is_count, search_box, TextHit};
 use crate::rules::{field_ok, norm, same_mon, same_word, Enc};
 use crate::util::{lower_first, now};
-use crate::vision::{self, box_visible, chat_showing, favorited, find_use_button, menu_ready, plain_row_in_sight};
+use crate::vision::{self, box_visible, chat_showing, favorited, find_use_button, menu_ready};
 use serde_json::Value;
 
 /// Scrolling the backpack's list (phones, when its search box can't be typed
@@ -163,8 +163,9 @@ impl Hunt {
             }
             if step == "item" {
                 if looking != "done" {
+                    // favorites are at the top: prefer if it's one of those in sight, else item (never
+                    // searched for: a search empties the list of the favorites that are there)
                     let p = prefer.unwrap_or("");
-                    // favorites are at the top, but more than a screenful hides some: then it's searched for
                     let mut rows: Vec<f64> = texts.iter().filter(|t| same_word(p, &t.text) && t.x < split).map(|t| t.y).collect();
                     rows.sort_by(f64::total_cmp);
                     let listed = texts.iter().any(|t| is_count(&t.text));
@@ -172,32 +173,12 @@ impl Hunt {
                         if favorited(&f, &texts, y, lay) {
                             self.print(&format!("  {p} is a favorite: throwing that instead of the {item}"));
                             item = p.to_string();
-                        } else if looking == "searched" {
-                            tab_at = now(); // the item's search next: the box shows prefer
                         }
                         looking = "done";
-                    } else if looking == "look" && listed && plain_row_in_sight(&f, &texts, split, lay) {
-                        looking = "done"; // every favorite is in sight above it, and none is prefer
-                        continue;
-                    } else if looking == "look" && listed && now() - tab_at > 1.0 {
-                        match search_box(&texts, split, v) {
-                            Some(b) => {
-                                self.trace(&format!("bag: looking for a favorited {p}"));
-                                looking = if self.type_in(b, p)? { "searched" } else { "done" };
-                                tab_at = now();
-                            }
-                            None => looking = "done",
-                        }
-                        continue;
-                    } else if looking == "searched" && now() - tab_at > 2.0 {
-                        (looking, tab_at) = ("done", now()); // none in the bag
-                    } else if looking == "look" && now() - tab_at > 3.0 {
-                        looking = "done"; // no list read: go on without it
+                    } else if listed || now() - tab_at > 3.0 {
+                        looking = "done"; // not in sight (or no list read): item
                     } else {
                         continue; // the list isn't up yet
-                    }
-                    if looking == "done" && prefer.is_some_and(|p| item != p) {
-                        continue; // the item from the next picture on
                     }
                 }
                 // exact names: "Dive Ball" and "Dream Ball" are one misread apart

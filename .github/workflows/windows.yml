@@ -1,9 +1,8 @@
-# Builds Hunt for Windows (it has to be built on Windows): the hunter,
-# hunt-engine.exe, with PyInstaller (windows/hunt.spec), and the window,
-# Hunt.exe, with Rust (window/), packed into PoopihuntSetup.exe with Inno Setup
-# (windows/hunt.iss). publish-windows.sh starts it with a build number and
-# puts the result on poopihunt.xyz; a push builds it too, as a check, without
-# the debug channel.
+# Builds Hunt for Windows (it has to be built on Windows): Hunt.exe, the pill
+# with the hunter in it (Rust: core/ and window/), packed into
+# PoopihuntSetup.exe with Inno Setup (windows/hunt.iss). publish-windows.sh
+# starts it with a build number and puts the result on poopihunt.xyz; a push
+# builds it too, as a check, without the debug channel.
 name: Windows build
 
 on:
@@ -17,7 +16,7 @@ on:
         default: "test"
   push:
     branches: [main]
-    paths: ["*.py", "requirements.txt", "config.example.json", "samples/**", "windows/**", "window/**",
+    paths: ["core/**", "window/**", "Cargo.toml", "Cargo.lock", "samples/**", "config.example.json", "windows/**",
             ".github/workflows/windows.yml"]
 
 permissions:
@@ -26,75 +25,53 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      # only published builds (a build number) report to the debug channel
+      PUBLISHED: ${{ github.event_name == 'workflow_dispatch' && inputs.version != '0' }}
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-          cache: pip  # (the packages' downloads kept between builds)
-          cache-dependency-path: requirements.txt
-
-      - name: Packages
-        run: python -m pip install --disable-pip-version-check -r requirements.txt pyinstaller==6.22.3
-
-      - name: Build number and the debug channel
-        shell: python
-        env:
-          VERSION: ${{ inputs.version || '0' }}
-          NAME: ${{ inputs.name || 'test' }}
-          # only published builds report to the debug channel
-          HOOK: ${{ github.event_name == 'workflow_dispatch' && secrets.WINDOWS_DEBUG_WEBHOOK || '' }}
-        run: |
-          import os
-          with open("build_info.py", "w") as f:
-              f.write(f"VERSION = {int(os.environ['VERSION'])}\nNAME = {os.environ['NAME']!r}\n")
-          if os.environ["HOOK"]:
-              with open("debuglog.py") as f:
-                  p = f.read()
-              with open("debuglog.py", "w") as f:
-                  f.write(p.replace("__WINDOWS_DEBUG_WEBHOOK__", os.environ["HOOK"]))
-          print("build", os.environ["VERSION"], os.environ["NAME"],
-                "with" if os.environ["HOOK"] else "without", "the debug channel")
-
-      - name: hunt-engine.exe
-        run: pyinstaller --noconfirm --clean windows/hunt.spec
-
       # Hunt.exe is the same from build to build (its number is in build.json): the last
-      # one is used again while window/ is unchanged, built (a minute or so) when it isn't
-      - name: Hunt.exe, from a build with this window/
-        id: window
+      # one is used again while its code is unchanged, built (a few minutes) when it isn't
+      - name: Hunt.exe, from a build with this code
+        id: hunt
         uses: actions/cache@v6
         with:
-          path: window/target/release/Hunt.exe
-          key: hunt-exe-${{ hashFiles('window/**', 'windows/hunt.ico') }}
+          path: target/release/Hunt.exe
+          key: hunt-exe-${{ env.PUBLISHED }}-${{ hashFiles('core/**', 'window/**', 'Cargo.toml', 'Cargo.lock', 'windows/hunt.ico') }}
 
       - uses: Swatinem/rust-cache@v2
-        if: steps.window.outputs.cache-hit != 'true'
-        with:
-          workspaces: window
+        if: steps.hunt.outputs.cache-hit != 'true'
+
+      - name: The tests (the samples read by their colors, the hunt on a pretend screen)
+        if: steps.hunt.outputs.cache-hit != 'true'
+        run: cargo test --release --locked -p hunt-core
 
       - name: Hunt.exe
         env:
           VERSION: ${{ inputs.version || '0' }}
           NAME: ${{ inputs.name || 'test' }}
+          HUNT_DEBUG_WEBHOOK: ${{ env.PUBLISHED == 'true' && secrets.WINDOWS_DEBUG_WEBHOOK || '' }}
         run: |
-          if (Test-Path window\target\release\Hunt.exe) { "Hunt.exe from a build with this window/" }
+          if (Test-Path target\release\Hunt.exe) { "Hunt.exe from a build with this code" }
           else {
-            cargo build --release --locked --manifest-path window/Cargo.toml
+            cargo build --release --locked -p hunt
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
-          Copy-Item window\target\release\Hunt.exe dist\Hunt\Hunt.exe
+          New-Item -ItemType Directory -Force dist\Hunt\samples | Out-Null
+          Copy-Item target\release\Hunt.exe dist\Hunt\Hunt.exe
+          Copy-Item samples\*.png dist\Hunt\samples\  # for --diagnose: read like on the Mac?
           @{ version = [long]$env:VERSION; name = $env:NAME } | ConvertTo-Json -Compress | Set-Content dist\Hunt\build.json -Encoding ascii
           "{0:N1} MB Hunt.exe" -f ((Get-Item dist\Hunt\Hunt.exe).Length / 1MB)
           Get-Content dist\Hunt\build.json
 
-      - name: Read the samples with Windows' OCR
+      - name: Read the samples with Windows' text recognition
         continue-on-error: true
         env:
           HUNT_DEBUG: "0"
           HUNT_DATA: ${{ runner.temp }}\hunt
-        run: dist\Hunt\hunt-engine.exe --diagnose --config config.example.json
+        # (Hunt.exe is a window's program: piped, PowerShell waits for it and shows what it says)
+        run: dist\Hunt\Hunt.exe --diagnose --config config.example.json | Out-Host
 
       - name: Hunt.exe's window comes up
         env:

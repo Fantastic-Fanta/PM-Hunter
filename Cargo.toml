@@ -3,8 +3,8 @@
 # text recognition of each), android/rust/ the hunter for the Android app.
 [workspace]
 resolver = "2"
-members = ["core"]
-default-members = ["core"]
+members = ["core", "window"]
+default-members = ["core", "window"]
 
 [workspace.package]
 edition = "2021"

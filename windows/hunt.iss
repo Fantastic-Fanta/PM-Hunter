@@ -1,4 +1,4 @@
-; PoopihuntSetup.exe: installs dist\Hunt (Poopihunt; Hunt.exe inside) for this Windows user (no admin), with a
+; PoopihuntSetup.exe: installs dist\Hunt (Poopihunt: Hunt.exe, the samples for --diagnose) for this Windows user (no admin), with a
 ; Start menu entry and a desktop icon. Hunt's window runs it with /VERYSILENT
 ; to update itself; it then starts the new Hunt. What Hunt keeps (config,
 ; finds, the website key) is in %LOCALAPPDATA%\Hunt and stays.
@@ -37,8 +37,10 @@ RestartApplications=no
 Name: desktopicon; Description: "Put Poopihunt on the desktop"
 
 [InstallDelete]
-; the last build's files, so nothing old is left next to the new ones
+; the last build's files, so nothing old is left next to the new ones (and the
+; Python hunter's, from before Hunt was all Rust)
 Type: filesandordirs; Name: "{app}\_internal"
+Type: files; Name: "{app}\hunt-engine.exe"
 ; its shortcuts from when it was called Hunt
 Type: files; Name: "{autoprograms}\Hunt.lnk"
 Type: files; Name: "{autodesktop}\Hunt.lnk"

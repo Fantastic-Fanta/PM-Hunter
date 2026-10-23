@@ -3,16 +3,21 @@
 //! round buttons: Hunt's folder, quit. Updates install themselves while it isn't
 //! hunting.
 //!
-//! The hunter itself is pokehunt.py (hunt-engine.exe, next to Hunt.exe), run
-//! as a process of its own: what it prints goes to hunt.log, its "@state"
-//! lines set the pill, and the window's buttons go to it as lines (toggle,
-//! test on, test off). Closing its input stops it. What a PC keeps
-//! (config.json, finds, the website key, hunt.log, window.json) is in
-//! %LOCALAPPDATA%\Hunt.
+//! The hunter (hunt-core, the same as Android's) runs in Hunt itself, on a
+//! thread of its own: what it says goes to hunt.log, its state sets the pill,
+//! and the pill's buttons reach it directly. What a PC keeps (config.json,
+//! finds, the website key, hunt.log, window.json) is in %LOCALAPPDATA%\Hunt;
+//! on a Mac, the folder Hunt runs in (HUNT_DATA).
 //!
-//! On a Mac, for trying it out:
-//!   HUNT_ENGINE=".venv/bin/python -u pokehunt.py" HUNT_DATA=. cargo run --manifest-path window/Cargo.toml
+//! On a Mac (from Terminal, which holds the Screen Recording and Accessibility grants):
+//!   HUNT_DATA=. cargo run --release            the pill
+//!   cargo run --release -- --terminal          the hunter alone (--watch, --paused, --debug, --calibrate)
+//!   cargo run --release -- --diagnose          the samples read, the screen, the mouse
+//!   cargo run --release -- --image x.png       a screenshot read
 #![cfg_attr(windows, windows_subsystem = "windows")]
+
+mod desktop;
+mod engine;
 
 use eframe::egui::{
     self, pos2, vec2, Align2, Color32, CursorIcon, FontFamily, FontId, Id, Pos2, Rect, Sense, Stroke, Vec2,
@@ -21,9 +26,9 @@ use eframe::egui::{
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::Command;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -52,27 +57,12 @@ const VANISH: f32 = 0.25; // s, the ball going
 const INK: Color32 = Color32::from_rgb(0x11, 0x11, 0x11);
 const PAPER: Color32 = Color32::WHITE;
 
-/// The build's number (higher is newer) and name, from build.json next to Hunt.exe
-/// (the Windows build writes it, so Hunt.exe itself is the same from build to build
-/// and is only built again when window/ changes); without it, a build of one's own (0, "dev").
-fn build() -> &'static (u64, String) {
-    static BUILD: std::sync::OnceLock<(u64, String)> = std::sync::OnceLock::new();
-    BUILD.get_or_init(|| {
-        let info = env::current_exe().ok()
-            .and_then(|exe| fs::read_to_string(exe.with_file_name("build.json")).ok())
-            .and_then(|text| serde_json::from_str::<Value>(&text).ok());
-        let get = |key| info.as_ref().and_then(|i| i.get(key).cloned());
-        (get("version").and_then(|v| v.as_u64()).unwrap_or(0),
-         get("name").and_then(|v| v.as_str().map(String::from)).unwrap_or_else(|| "dev".into()))
-    })
-}
-
 fn version() -> u64 {
-    build().0
+    engine::build().0
 }
 
 fn name() -> &'static str {
-    &build().1
+    &engine::build().1
 }
 
 fn site() -> String {
@@ -129,14 +119,7 @@ struct Paths {
 
 impl Paths {
     fn new() -> Paths {
-        let data = env::var_os("HUNT_DATA").map(PathBuf::from).unwrap_or_else(|| {
-            if cfg!(windows) {
-                PathBuf::from(env::var_os("LOCALAPPDATA").unwrap_or_default()).join("Hunt")
-            } else {
-                env::current_dir().unwrap_or_default()
-            }
-        });
-        let _ = fs::create_dir_all(&data);
+        let data = engine::data_dir();
         Paths {
             config: data.join("config.json"),
             settings: data.join("window.json"),
@@ -194,7 +177,9 @@ fn open_path(path: &str) {
 
 enum Msg {
     Line(u64, String),
-    Ended(u64, bool),
+    Code(u64, Option<String>),
+    State(u64, Map<String, Value>),
+    Ended(u64),
     Update(Map<String, Value>),
     Progress(f32), // how much of the update's down, 0 to 1
     Downloaded(PathBuf),
@@ -215,18 +200,38 @@ struct Intro {
     frames: u32,
 }
 
+/// The hunter that's on.
 struct Proc {
     id: u64,
-    child: Arc<Mutex<Child>>,
-    stdin: Option<ChildStdin>,
+    control: Arc<hunt_core::Control>,
 }
 
-fn engine() -> Vec<String> {
-    if let Ok(cmd) = env::var("HUNT_ENGINE") {
-        return cmd.split_whitespace().map(String::from).collect();
+/// What the hunter says and does, to the window (from its thread).
+struct ToWindow {
+    id: u64,
+    tx: Mutex<Sender<Msg>>,
+    ctx: egui::Context,
+}
+
+impl ToWindow {
+    fn send(&self, msg: Msg) {
+        let _ = self.tx.lock().unwrap().send(msg);
+        self.ctx.request_repaint();
     }
-    let dir = env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_default();
-    vec![dir.join(if cfg!(windows) { "hunt-engine.exe" } else { "hunt-engine" }).to_string_lossy().into()]
+}
+
+impl hunt_core::Sink for ToWindow {
+    fn line(&self, text: &str) {
+        self.send(Msg::Line(self.id, text.to_string()));
+    }
+    fn code(&self, code: Option<&str>) {
+        self.send(Msg::Code(self.id, code.map(String::from)));
+    }
+    fn state(&self, state: &Value) {
+        if let Value::Object(s) = state {
+            self.send(Msg::State(self.id, s.clone()));
+        }
+    }
 }
 
 // ---------------------------------------------------------------- the window
@@ -379,75 +384,28 @@ impl Hunt {
         if self.running() {
             return;
         }
-        let mut cmd = engine();
-        if paused {
-            cmd.push("--paused".into());
-        }
-        cmd.extend(match mode {
-            "watch" => vec!["--watch"],
-            "debug" => vec!["--debug"],
-            "diagnose" => vec!["--diagnose"],
-            _ => vec![],
-        }.into_iter().map(String::from));
-        if self.test {
-            cmd.extend(["--practice".into(), "1".into(), "--calibrate".into()]); // Debug mode, from the start
-        }
-        cmd.extend(["--window".into(), "--config".into(), self.paths.config.to_string_lossy().into()]);
-        let mut command = Command::new(&cmd[0]);
-        command.args(&cmd[1..]).current_dir(&self.paths.data)
-            .env("HUNT_DATA", &self.paths.data).env("PYTHONUNBUFFERED", "1").env("PYTHONIOENCODING", "utf-8")
-            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-        if !self.reports {
-            command.env("HUNT_DEBUG", "0");
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-        }
-        let mut child = match command.spawn() {
-            Ok(child) => child,
+        self.next_id += 1;
+        let id = self.next_id;
+        let sink = Arc::new(ToWindow { id, tx: Mutex::new(self.tx.clone()), ctx: self.ctx.clone() });
+        let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+        let launch = engine::Launch {
+            mode, paused, window: true, practice: 0, calibrate: false, reports: self.reports, config: &self.paths.config,
+        };
+        let control = match engine::launch(launch, sink, move || {
+            let _ = tx.send(Msg::Ended(id));
+            ctx.request_repaint();
+        }) {
+            Ok(c) => c,
             Err(e) => {
-                self.say(&format!("couldn't start the hunter ({}): {e}", cmd[0]));
-                self.last_exit = Some("No hunter");
+                self.say(&format!("couldn't start the hunter: {e}"));
+                self.last_exit = Some(if e.contains("config.json") { "Check config.json" } else { "No hunter" });
                 return;
             }
         };
-        self.next_id += 1;
-        let id = self.next_id;
-        let (out, err, stdin) = (child.stdout.take(), child.stderr.take(), child.stdin.take());
-        let child = Arc::new(Mutex::new(child));
-        let reader = |pipe: Box<dyn Read + Send>, tx: Sender<Msg>, ctx: egui::Context| {
-            thread::spawn(move || {
-                let mut pipe = BufReader::new(pipe);
-                let mut buf = Vec::new();
-                while pipe.read_until(b'\n', &mut buf).map(|n| n > 0).unwrap_or(false) {
-                    let line = String::from_utf8_lossy(&buf).trim_end_matches(['\r', '\n']).to_string();
-                    buf.clear();
-                    if tx.send(Msg::Line(id, line)).is_err() {
-                        break;
-                    }
-                    ctx.request_repaint();
-                }
-            })
-        };
-        let err_thread = err.map(|e| reader(Box::new(e), self.tx.clone(), self.ctx.clone()));
-        let out_thread = out.map(|o| reader(Box::new(o), self.tx.clone(), self.ctx.clone()));
-        let (tx, ctx, waiting) = (self.tx.clone(), self.ctx.clone(), child.clone());
-        thread::spawn(move || {
-            for t in [out_thread, err_thread].into_iter().flatten() {
-                let _ = t.join();
-            }
-            let ok = loop {
-                if let Ok(Some(status)) = waiting.lock().unwrap().try_wait() {
-                    break status.success();
-                }
-                thread::sleep(Duration::from_millis(50));
-            };
-            let _ = tx.send(Msg::Ended(id, ok));
-            ctx.request_repaint();
-        });
-        self.proc = Some(Proc { id, child, stdin });
+        if self.test {
+            control.set_test(true); // Debug mode, from the start
+        }
+        self.proc = Some(Proc { id, control });
         self.mode = mode.into();
         self.state.clear();
         self.code.clear();
@@ -457,21 +415,21 @@ impl Hunt {
     }
 
     fn send(&mut self, cmd: &str) {
-        if let Some(stdin) = self.proc.as_mut().and_then(|p| p.stdin.as_mut()) {
-            let _ = writeln!(stdin, "{cmd}").and_then(|_| stdin.flush());
+        if let Some(p) = &self.proc {
+            match cmd {
+                "toggle" => p.control.toggle(),
+                "test on" => p.control.set_test(true),
+                "test off" => p.control.set_test(false),
+                _ => {}
+            }
         }
     }
 
-    /// Its input closed, it stops; killed if it's still there 6 s later.
+    /// It ends at its next look (a battle's step at most).
     fn stop(&mut self) {
         self.fake = false;
-        if let Some(proc) = self.proc.as_mut() {
-            proc.stdin = None;
-            let child = proc.child.clone();
-            thread::spawn(move || {
-                thread::sleep(Duration::from_secs(6));
-                let _ = child.lock().unwrap().kill();
-            });
+        if let Some(proc) = self.proc.as_ref() {
+            proc.control.stop();
         }
     }
 
@@ -490,22 +448,6 @@ impl Hunt {
     }
 
     fn got_line(&mut self, line: String) {
-        if let Some(state) = line.strip_prefix("@state ") {
-            if let Ok(Value::Object(s)) = serde_json::from_str(state) {
-                self.got_state(s);
-            }
-            return;
-        }
-        if let Some(i) = line.find("Website code: ") {
-            let code: String = line[i + 14..].chars().take_while(|c| c.is_alphanumeric()).collect();
-            if !code.is_empty() {
-                self.code = code;
-                return; // the code isn't for hunt.log (it gets sent as problem reports)
-            }
-        }
-        if line.contains("a browser logged in with the code") {
-            self.code.clear();
-        }
         if !line.trim().is_empty() {
             self.last_line = line.trim().to_string();
             self.say(&line);
@@ -544,10 +486,10 @@ impl Hunt {
         }
     }
 
-    fn ended(&mut self, ok: bool) {
+    fn ended(&mut self) {
         self.last_exit = if self.mode == "diagnose" {
             Some("Done") // what it found is in hunt.log
-        } else if !ok && !self.last_line.is_empty() && !self.last_line.contains("stopped") {
+        } else if !self.last_line.is_empty() && !self.last_line.contains("stopped") {
             Some("Stopped") // why is in hunt.log
         } else {
             None
@@ -1240,8 +1182,10 @@ impl eframe::App for Hunt {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
                 Msg::Line(id, line) if self.proc.as_ref().map(|p| p.id) == Some(id) => self.got_line(line),
-                Msg::Ended(id, ok) if self.proc.as_ref().map(|p| p.id) == Some(id) => self.ended(ok),
-                Msg::Line(..) | Msg::Ended(..) => {}
+                Msg::Code(id, code) if self.proc.as_ref().map(|p| p.id) == Some(id) => self.code = code.unwrap_or_default(),
+                Msg::State(id, s) if self.proc.as_ref().map(|p| p.id) == Some(id) => self.got_state(s),
+                Msg::Ended(id) if self.proc.as_ref().map(|p| p.id) == Some(id) => self.ended(),
+                Msg::Line(..) | Msg::Code(..) | Msg::State(..) | Msg::Ended(..) => {}
                 Msg::Update(info) => {
                     self.update = Some(info);
                     self.download_update();
@@ -1339,6 +1283,9 @@ fn no_mac_shadow(cc: &eframe::CreationContext) {
                     let window: *mut AnyObject = objc2::msg_send![view, window];
                     if !window.is_null() {
                         let _: () = objc2::msg_send![window, setHasShadow: false];
+                        // the hunter's screenshots are of what's under the pill
+                        let number: isize = objc2::msg_send![window, windowNumber];
+                        desktop::set_own_window(number as u32);
                     }
                 }
             }
@@ -1474,6 +1421,15 @@ fn single_instance() -> bool {
 }
 
 fn main() -> eframe::Result {
+    let args: Vec<String> = env::args().skip(1).collect();
+    if args.iter().any(|a| ["--terminal", "--diagnose", "--image", "--test-discord", "--help"].contains(&a.as_str())) {
+        if args.iter().any(|a| a == "--help") {
+            println!("Hunt: the pill. Hunt --terminal [--watch] [--paused] [--debug] [--practice N] [--calibrate]: \
+                      the hunter alone; --diagnose; --image x.png [--calibrate]; --test-discord; --config path");
+            return Ok(());
+        }
+        std::process::exit(engine::terminal(&args));
+    }
     std::panic::set_hook(Box::new(|info| note(&format!("Hunt's window crashed: {info}"))));
     if env::var_os("HUNT_RENDERER").is_none() && !single_instance() {
         return Ok(()); // (the Direct3D start is this same Hunt, already counted)

@@ -1,10 +1,10 @@
 #!/bin/zsh
 # Double-click to start the Pokemon hunter in Terminal. Ctrl+Shift+H pauses / resumes.
 cd "$(dirname "$0")"
-if [[ ! -x .venv/bin/python ]]; then
-  echo "First run: setting up Python packages (takes a minute)..."
-  python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt || {
-    echo "Setup failed."; read -k1 "?Press any key to close."; exit 1; }
+app=target/release/Hunt
+if [[ ! -x $app || -n $(find core window Cargo.toml Cargo.lock -newer $app 2>/dev/null | grep -v '/target/') ]]; then
+  echo "Building Hunt (a few minutes the first time)..."
+  cargo build -q --release -p hunt || { echo "The build failed."; read -k1 "?Press any key to close."; exit 1; }
 fi
-.venv/bin/python -W ignore pokehunt.py
+HUNT_DATA="$PWD" $app --terminal "$@"
 read -k1 "?pokehunt stopped. Press any key to close."

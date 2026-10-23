@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Builds Hunt for Windows on GitHub (it has to be built on Windows:
+# Builds Hunt for Windows on GitHub (Hunt.exe, all Rust: core/ and window/; it has to be built on Windows:
 # .github/workflows/windows.yml) and publishes it on poopihunt.xyz:
 # PoopihuntSetup.exe, windows.json and the download page. Hunt on a PC offers the
 # update when it next starts, or within 6 hours. A copy lands in ~/Downloads.
@@ -14,7 +14,7 @@ SITE=/srv/poopihunt.xyz/public   # Hunt's own folder; nothing else is touched
 FILE=PoopihuntSetup.exe
 
 git fetch -q origin main
-if [[ -n $(git status --porcelain -- '*.py' requirements.txt config.example.json samples windows window .github) ||
+if [[ -n $(git status --porcelain -- core window Cargo.toml Cargo.lock config.example.json samples windows .github) ||
       $(git rev-parse HEAD) != $(git rev-parse origin/main) ]]; then
   echo "GitHub builds what's pushed to main: commit and push the Windows changes first"
   exit 1
