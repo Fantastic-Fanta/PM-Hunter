@@ -355,14 +355,28 @@ object Calibrate {
         val gx = got.flatMap { listOf(it.l, it.r) }.map { (it - mute.l) / s }
         val ry = refs.flatMap { listOf(it.t, it.b) }.map { (it - Ref.MUTE.t).toDouble() }
         val gy = got.flatMap { listOf(it.t, it.b) }.map { (it - mute.t) / s }
-        val (kx, dx) = line(rx, gx)
-        val (ky, dy) = line(ry, gy)
+        val (kx, dx, missX) = fitEdges(rx, gx)
+        val (ky, dy, missY) = fitEdges(ry, gy)
         if (kx !in 0.6..1.6 || ky !in 0.6..1.6) return null
-        val miss = max(rx.indices.maxOf { abs(kx * rx[it] + dx - gx[it]) },
-                       ry.indices.maxOf { abs(ky * ry[it] + dy - gy[it]) })
+        val miss = max(missX, missY)
         if (miss > 12) return null  // reference px: the anchors don't agree on a layout
         val cal = Calibration(kx, ky, dx, dy, colors, miss * s)
         return if (Vision.menuReady(f, Layout(mute, cal))) cal else null
+    }
+
+    /** got = k ref + d through the edges found, (k, d, worst miss). An edge that's off (a
+     *  button's patch measured too wide: its icon not loaded, a white square; two buttons
+     *  run together) is left out, the worst first, while more than 5 are left. As
+     *  fit_edges in pokehunt.py. */
+    private fun fitEdges(ref: List<Double>, got: List<Double>): Triple<Double, Double, Double> {
+        val keep = ref.indices.toMutableList()
+        while (true) {
+            val (k, d) = line(keep.map { ref[it] }, keep.map { got[it] })
+            val worst = keep.maxByOrNull { abs(k * ref[it] + d - got[it]) }!!
+            val miss = abs(k * ref[worst] + d - got[worst])
+            if (miss <= 12 || keep.size <= 5) return Triple(k, d, miss)
+            keep.remove(worst)
+        }
     }
 
     /** Least squares y = k x + d. */

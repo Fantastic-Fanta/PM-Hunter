@@ -419,6 +419,19 @@ def find_block(rgb, lay, ref, color):
     return None
 
 
+def fit_edges(ref, got):
+    """got = k * ref + d through the edges found, (k, d, worst miss). An edge that's off
+    (a button's patch measured too wide: its icon not loaded, a white square; two
+    buttons run together) is left out, the worst first, while more than 5 are left."""
+    keep = np.ones(len(ref), bool)
+    while True:
+        k, d = np.polyfit(ref[keep], got[keep], 1)
+        miss = np.where(keep, np.abs(k * ref + d - got), 0)
+        if miss.max() <= 12 or keep.sum() <= 5:
+            return k, d, miss.max()
+        keep[np.argmax(miss)] = False
+
+
 def calibrate(rgb, mute):
     """Fits the layout to the buttons and the enemy's box on this screen.
     Returns (calibration, worst miss in px), or None if too little of the
@@ -443,9 +456,9 @@ def calibrate(rgb, mute):
     gx = (np.r_[got[:, 0], got[:, 2]] - mute[0]) / s
     ry = np.r_[ref[:, 1], ref[:, 3]] - REF_MUTE[1]
     gy = (np.r_[got[:, 1], got[:, 3]] - mute[1]) / s
-    kx, dx = np.polyfit(rx, gx, 1)
-    ky, dy = np.polyfit(ry, gy, 1)
-    miss = max(np.abs(kx * rx + dx - gx).max(), np.abs(ky * ry + dy - gy).max())
+    kx, dx, miss_x = fit_edges(rx, gx)
+    ky, dy, miss_y = fit_edges(ry, gy)
+    miss = max(miss_x, miss_y)
     if not (0.6 < kx < 1.6 and 0.6 < ky < 1.6) or miss > 12:  # the anchors don't agree on a layout
         return None
     new["fit"] = [float(kx), float(ky), float(dx), float(dy)]
