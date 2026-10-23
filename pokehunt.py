@@ -1402,10 +1402,12 @@ def same_mon(a, b):
 
 def catch(enc, img, lay, plan, first_ball=True, debug=False):
     """catching(), stopping when the battle ends under it."""
-    progress = [0, 0]
+    progress = [0, 0, ""]  # balls, turns, the last ball
     try:
         return catching(enc, img, lay, plan, first_ball, debug, progress)
     except BattleOver:
+        if progress[2] == "Park Ball":  # it never misses: the battle ending is the catch
+            return "caught", "a Park Ball"
         print("  the battle is over", flush=True)
         return "over", f"{progress[0]} ball(s), {progress[1]} turns"
 
@@ -1440,8 +1442,8 @@ def catching(enc, img, lay, plan, first_ball=True, debug=False, progress=None):
         hp = own_hp(img, lay)
         print(f"  turn {turns + 1}: {lead or 'ours'} at {f'{hp:.0%}' if hp is not None else '? HP'}, "
               f"{now['species']} {now['status'] or 'no status'}" + (", drowsy" if drowsy else ""), flush=True)
-        if turns == 0 and first_ball and plan.get("first_ball"):
-            ball = plan["first_ball"]
+        if turns == 0 and first_ball and (park or plan.get("first_ball")):
+            ball = plan.get("first_ball") or new or plan["awake_ball"]  # unless a Park Ball is favorited
         elif hp is not None and hp < plan.get("heal_below", 0.4) and heals < 5:
             trace(f"low HP: {plan['heal_item']}")
             if not use_item(lay, "Recovers", plan["heal_item"], lead):
@@ -1474,14 +1476,18 @@ def catching(enc, img, lay, plan, first_ball=True, debug=False, progress=None):
                 return "no bag", f"{ball} failed"
             balls.append(used)
             park = None
+            if progress is not None:
+                progress[:] = [len(balls), turns, used]
         outcome, img, rgb, lay, msgs = wait_turn(lay)
         turns += 1
         if progress is not None:
-            progress[:] = [len(balls), turns]
+            progress[:] = [len(balls), turns, balls[-1] if balls else ""]
         print(f"  turn {turns}: {outcome}" + (f". The battle said: {' / '.join(msgs)}" if msgs else ""), flush=True)
         if debug and img is not None:
             debuglog.debug.shot(f"catch turn {turns}: {outcome}", game_shot(img, lay))
         details = f"{len(balls)} ball(s), last {balls[-1] if balls else '-'}, {turns} turns"
+        if balls and balls[-1] == "Park Ball" and outcome in ("caught", "over"):
+            return "caught", "a Park Ball"  # it never misses: the battle ending is the catch
         if outcome != "turn":
             return outcome, details
         if any("fell asleep" in m.lower() for m in msgs):

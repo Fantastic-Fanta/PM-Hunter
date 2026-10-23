@@ -790,16 +790,18 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
     private fun catch(enc: Enc, f0: Frame, lay0: Layout): Pair<String, String> {
         var balls = 0
         var turns = 0
+        var last = ""
         return try {
-            catching(enc, f0, lay0) { b, t -> balls = b; turns = t }
+            catching(enc, f0, lay0) { b, t, ball -> balls = b; turns = t; last = ball }
         } catch (e: BattleOver) {
+            if (last == "Park Ball") return "caught" to "a Park Ball"  // it never misses: the battle ending is the catch
             Log.print("  the battle is over")
             "over" to "$balls ball(s), $turns turns"
         }
     }
 
-    /** catch()'s turns; progress gets the balls thrown and turns so far. */
-    private fun catching(enc: Enc, f0: Frame, lay0: Layout, progress: (Int, Int) -> Unit): Pair<String, String> {
+    /** catch()'s turns; progress gets the balls thrown, turns so far and the last ball. */
+    private fun catching(enc: Enc, f0: Frame, lay0: Layout, progress: (Int, Int, String) -> Unit): Pair<String, String> {
         var f = f0
         var lay = lay0
         val lead = Regex("should (.+?) do").find(regionText(f, lay, Ref.MSG))?.groupValues?.get(1) ?: ""
@@ -821,8 +823,8 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
             Log.print("  turn ${turns + 1}: ${lead.ifEmpty { "ours" }} at ${hp?.let { "${(it * 100).toInt()}%" } ?: "? HP"}, " +
                       "${cur.species} ${cur.status.ifEmpty { "no status" }}" + if (drowsy) ", drowsy" else "")
             var ball: String? = null
-            if (turns == 0 && cfg.str("first_ball").isNotEmpty()) {
-                ball = cfg.str("first_ball")
+            if (turns == 0 && (park != null || cfg.str("first_ball").isNotEmpty())) {
+                ball = cfg.str("first_ball").ifEmpty { cfg.str("awake_ball") }  // unless a Park Ball is favorited
             } else if (hp != null && hp < cfg.num("heal_below") && heals < 5) {
                 trace("low HP: ${cfg.str("heal_item")}")
                 if (!useItem(lay, "Recovers", cfg.str("heal_item"), lead)) return "no bag" to "${cfg.str("heal_item")} failed"
@@ -852,15 +854,18 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
                 if (!useItem(lay, "Pokeballs", ball, prefer = park)) return "no bag" to "$ball failed"
                 balls.add(usedItem)
                 park = null
+                progress(balls.size, turns, usedItem)
             }
             val turn = waitTurn(lay)
             lay = turn.lay
             turns++
-            progress(balls.size, turns)
+            progress(balls.size, turns, balls.lastOrNull() ?: "")
             Log.print("  turn $turns: ${turn.outcome}" +
                       if (turn.msgs.isEmpty()) "" else ". The battle said: ${turn.msgs.joinToString(" / ")}")
             if (debugMode) turn.f?.let { report("catch turn $turns: ${turn.outcome}", gameShot(it, turn.lay)) }
             val details = "${balls.size} ball(s), last ${balls.lastOrNull() ?: "-"}, $turns turns"
+            if (balls.lastOrNull() == "Park Ball" && turn.outcome in listOf("caught", "over"))
+                return "caught" to "a Park Ball"  // it never misses: the battle ending is the catch
             if (turn.outcome != "turn" || turn.f == null) return turn.outcome to details
             f = turn.f
             if (turn.msgs.any { "fell asleep" in it.lowercase() }) drowsy = false
