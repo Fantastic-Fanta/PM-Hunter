@@ -1,16 +1,21 @@
-"""Everything a run prints, its errors and some screenshots, to a Discord
-webhook: for following a run on someone else's PC (the Windows version is
-tested on a friend's). Standard library only, so it can report a crash even
-when the other packages failed to install.
+"""What goes wrong on a run, to a Discord webhook: for following a run on
+someone else's PC (the Windows version is tested on a friend's). Standard
+library only, so it can report a crash even when the other packages failed to
+install.
 
-Lines are gathered and sent every few seconds, as code blocks; Discord takes
-about 30 messages a minute per webhook.
+Not every encounter: a debug run (and --debug, --diagnose) is sent in full,
+lines and pictures; otherwise only what went wrong, a failure's line with the
+ones just before it and its picture, and crashes. Lines are gathered and sent
+every few seconds, as code blocks; Discord takes about 30 messages a minute per
+webhook.
 """
 import atexit
+import collections
 import io
 import json
 import os
 import platform
+import re
 import sys
 import threading
 import time
@@ -26,7 +31,10 @@ URL = {"win32": HOOK}.get(sys.platform, "") if HOOK.startswith("https://") else 
 if os.environ.get("HUNT_DEBUG") == "0":  # Hunt's window: "Send problem reports" is off
     URL = ""
 SHOTS = 25          # screenshots per run at most (besides crashes)
-CLICK_SHOTS = 10    # the first clicks get a close-up each
+CLICK_SHOTS = 10    # a debug run's first clicks get a close-up each
+# a line saying something went wrong (the hunter's "trouble" always comes with a screenshot)
+FAILURE = re.compile(r"FAILED|went wrong|couldn't|could not|can't|didn't|failed|stuck|gave up|giving up"
+                     r"|error|exception|traceback|screenshot:|crash", re.I)
 
 
 class Debug:
@@ -39,6 +47,9 @@ class Debug:
             build = "own build"
         self.who = f"{platform.system()} {platform.release()} · {build} · run {self.run}"
         self.lines = []
+        self.recent = collections.deque(maxlen=15)  # lately, not sent: what led up to a failure
+        self.header = ""  # the PC (system_info), with the run's first failure
+        self.loud = lambda: False  # everything's sent while it's True: a debug run
         self.lock = threading.Lock()
         self.shots = 0
         self.clicks = 0
@@ -64,10 +75,22 @@ class Debug:
         atexit.register(self.flush)
 
     def note(self, text):
-        """A line for the webhook only, not the console."""
-        if self.url:
-            with self.lock:
+        """A line (for the webhook only, not the console): sent in a debug run, or if it
+        says something went wrong (with the lines just before it); kept for that otherwise."""
+        if not self.url:
+            return
+        with self.lock:
+            if self.loud():
                 self.lines.append(text)
+            elif FAILURE.search(text):
+                if self.header:
+                    self.lines.append(self.header)
+                    self.header = ""
+                self.lines.extend(self.recent)
+                self.recent.clear()
+                self.lines.append(text)
+            else:
+                self.recent.append(text)
 
     def flush(self):
         with self.lock:
@@ -88,9 +111,10 @@ class Debug:
             self.wake.clear()
             self.flush()
 
-    def shot(self, caption, img, max_width=1280):
-        """A screenshot (PIL image) with a caption, up to SHOTS a run."""
-        if not self.url or self.shots >= SHOTS:
+    def shot(self, caption, img, max_width=1280, failure=False):
+        """A screenshot (PIL image) with a caption, up to SHOTS a run: of a failure,
+        or anything in a debug run."""
+        if not self.url or self.shots >= SHOTS or not (failure or self.loud()):
             return
         self.shots += 1
         img = img.copy()
@@ -102,9 +126,11 @@ class Debug:
         threading.Thread(target=self.post, args=(caption, buf.getvalue()), daemon=True).start()
 
     def click_shot(self):
-        """Whether this click gets a close-up (the first CLICK_SHOTS)."""
+        """Whether this click gets a close-up (a debug run's first CLICK_SHOTS)."""
+        if not (self.url and self.loud()):
+            return False
         self.clicks += 1
-        return bool(self.url) and self.clicks <= CLICK_SHOTS
+        return self.clicks <= CLICK_SHOTS
 
     def post(self, text, png=None):
         if not self.url:

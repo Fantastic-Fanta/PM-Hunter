@@ -70,8 +70,9 @@ as a check. On a Mac the same window runs the Python hunter:
 `HUNT_PREVIEW=1` never does; `--smoke --intro` goes through its states with
 the opening and the closing.) The icon: `python windows/make_icon.py`.
 
-Published builds report what they print, their errors, and screenshots of
-calibration, trouble, finds and the first 10 clicks to the Windows debug
+Published builds report debug runs in full (their lines, calibration, the
+first 10 clicks, each step's picture) and otherwise only what goes wrong (the
+line with the 15 before it, its screenshot, crashes) to the Windows debug
 channel (`debuglog.py`; the address is the repository's
 `WINDOWS_DEBUG_WEBHOOK` secret, `"debug_webhook"` in config.json changes it,
 `""` turns it off, so does **Send problem reports**).

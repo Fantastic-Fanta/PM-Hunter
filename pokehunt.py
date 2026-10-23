@@ -714,7 +714,7 @@ def snapshot(img, reason):
     img.save(path)
     for old in sorted(glob.glob(os.path.join(DEBUG_DIR, "*.png")))[:-30]:
         os.remove(old)
-    debuglog.debug.shot(reason, img)
+    debuglog.debug.shot(reason, img, failure=True)
     return path
 
 
@@ -2691,7 +2691,10 @@ def main():
     if url and not debuglog.debug.url:
         debuglog.debug.start(url)
     debuglog.debug.url = url
-    debuglog.debug.note(system_info())
+    debuglog.debug.header = system_info()  # (sent with the first thing that goes wrong)
+    # a debug run (the window's Debug mode, a new install's first hunt), --debug or
+    # --diagnose: everything to the debug channel; otherwise what goes wrong
+    debuglog.debug.loud = lambda: bool(debug_run[0] or args.debug or args.diagnose)
 
     if args.diagnose:
         diagnose(cfg)
