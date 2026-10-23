@@ -971,7 +971,7 @@ def remote_battle(cfg, enc, img, lay):
             what, name = cmd.get("cmd"), cmd.get("name", "")
             web.error = ""
             web.acting = {"ball": f"Throwing a {name}", "move": f"Using {name}",
-                          "heal": f"Using a {plan['heal_item']}", "pp": f"Using a {plan['pp_item']}",
+                          "heal": f"Using a {plan['heal_item']}", "pp": f"A {plan['pp_item']} after this battle",
                           "run": "Running"}.get(what, "")
             if not web.acting:
                 continue
@@ -991,10 +991,10 @@ def remote_battle(cfg, enc, img, lay):
                     web.error = f"Couldn't find {name} in the Fight menu"
             elif what == "heal":
                 done = use_item(lay, "Recovers", plan["heal_item"], web.lead.get("name"))
-            elif what == "pp":
-                done = use_item(lay, "Recovers", plan["pp_item"], web.lead.get("name"))
-                if done:
-                    set_moves([dict(m, pp=m["max"] if m["max"] is not None else m["pp"]) for m in web.moves])
+            elif what == "pp":  # the game takes it only outside battles
+                need_pp(web.lead.get("name"), "a move", plan)
+                web.error = f"The game takes a {plan['pp_item']} only outside battles: it's used after this one"
+                done = False  # no turn taken: the page shows that, and the battle goes on
             else:  # run: clicks Run until the battle is over
                 web.done = cmd.get("seq", 0)
                 if run_away(lay, for_website=True):
@@ -1235,14 +1235,16 @@ def find_tab(texts, want, split, width):
     return float(np.median([x for _, x, _ in in_col])), float(ys.mean() + step * (i - ns.mean()))
 
 
-def use_item(lay, tab, item, target=None, prefer=None):
+def use_item(lay, tab, item, target=None, prefer=None, in_battle=True):
     """Bag -> tab -> item -> Use, and -> party member when the item asks for
     one. Favorited items sit at the top of their tab; anything else is
     searched for. prefer: used instead, if it's a favorite there. The name
-    of what was used; False on failure (the backpack is closed again)."""
-    ensure_battle(lay)
-    trace(f"bag: opening it for {item}")
-    click_at(*lay.pt(*BAG))
+    of what was used; False on failure (the backpack is closed again).
+    in_battle=False: the bag is opening from the MENU already (restore_pp)."""
+    if in_battle:
+        ensure_battle(lay)
+        trace(f"bag: opening it for {item}")
+        click_at(*lay.pt(*BAG))
     move_mouse(*lay.pt(*AFK_SPOT))
     split = lay.pt(BAG_SPLIT, 0)[0]
     step, row_y, tab_at, searched = "tab", 0, 0.0, False
@@ -1425,7 +1427,7 @@ def catching(enc, img, lay, plan, first_ball=True, debug=False, progress=None):
     legendary = field_ok("legendary", enc["species"])  # much harder to catch
     max_balls = plan["legendary_max_balls" if legendary else "max_balls"]
     max_turns = plan["legendary_max_turns" if legendary else "max_turns"]
-    balls, turns, drowsy, heals, elixirs = [], 0, False, 0, 0
+    balls, turns, drowsy, heals = [], 0, False, 0
     now = enc
     # the first ball is a Park Ball if one is favorited in the bag (not for practice or tests)
     park = "Park Ball" if plan.get("park_ball", True) and first_ball and not debug else None
@@ -1453,19 +1455,16 @@ def catching(enc, img, lay, plan, first_ball=True, debug=False, progress=None):
             ball = new or plan["asleep_ball"]
         elif now["status"]:
             ball = new or plan["awake_ball"]  # poisoned etc.: Yawn can't put it to sleep
-        elif not same_word(plan.get("sleep_with", ""), lead):
-            ball = new or plan["awake_ball"]  # only the Yawn user puts it to sleep; others just throw
+        elif not same_word(plan.get("sleep_with", ""), lead) or pp_for[0]:
+            ball = new or plan["awake_ball"]  # only the Yawn user puts it to sleep, with PP left; others just throw
         else:
             move = plan["guard_move"] if drowsy else plan["sleep_move"]
             used = use_move(lay, move)
             if used == "used":
                 drowsy, ball = not drowsy, None
-            elif used == "no pp" and elixirs < 3:
-                trace(f"{move} is out of PP: {plan['pp_item']}")
-                if not use_item(lay, "Recovers", plan["pp_item"], lead):
-                    return "no bag", f"{plan['pp_item']} failed"
-                elixirs, ball = elixirs + 1, None
             else:
+                if used == "no pp":
+                    need_pp(lead, move, plan)
                 ball = new or plan["awake_ball"]
         if ball:
             if len(balls) >= max_balls:
@@ -1594,6 +1593,71 @@ def save_game():
     return saved
 
 
+pp_for = [""]  # the Pokemon whose moves ran out of PP: the PP item, once the battle is over
+
+
+def need_pp(lead, move, plan):
+    """A move is out of PP. The game takes the PP item only outside battles,
+    so it's used between encounters (restore_pp); balls until then."""
+    if not pp_for[0]:
+        pp_for[0] = lead or plan.get("sleep_with", "")
+        print(f"  {move} is out of PP: a {plan['pp_item']} on {pp_for[0]} after this battle "
+              "(the game takes it only outside battles)", flush=True)
+
+
+def restore_pp(plan, lay):
+    """MENU -> Bag -> Recovers -> the PP item -> Use -> the Pokemon, between
+    encounters, then the bag and the menu closed again. lay: the last
+    battle's, for where the bag's parts are. True once used."""
+    img = grab()
+    texts = screen_texts(img)
+    tab = next(((x, y) for t, x, y in texts if norm(t) == "menu"), None)
+    if not tab or find_mute(load_rgb(img)):
+        return False
+    trace(f"pp: MENU at ({tab[0]:.0f}, {tab[1]:.0f})")
+    click_at(*tab)
+    tries, end = 0, time.time() + 8
+    while time.time() < end:
+        time.sleep(0.4)
+        img = grab()
+        texts = screen_texts(img)
+        if find_mute(load_rgb(img)):
+            return False  # an encounter came first
+        hit = next(((x, y) for t, x, y in texts if norm(t) == "bag"), None)
+        if hit and menu_open(texts):
+            at = menu_button(hit, texts, retry=tries > 0)
+            trace(f"pp: clicking Bag at ({at[0]:.0f}, {at[1]:.0f})")
+            click_at(*at)
+            tries += 1
+            used = use_item(lay, "Recovers", plan["pp_item"], pp_for[0], in_battle=False)
+            close_after_item()
+            return bool(used)
+    say(f"  (couldn't open the Bag from the MENU: {snapshot(img, 'pp-menu')})")
+    clear_leftovers()
+    return False
+
+
+def close_after_item():
+    """After an item outside battle: its message clicked away, the bag's
+    Close, the MENU's tab, until neither is up."""
+    end = time.time() + 10
+    while time.time() < end:
+        time.sleep(0.5)
+        texts = screen_texts(grab())
+        msg = next(((x, y) for t, x, y in texts if re.search(r"\bpp\b.*(restored|recovered)|restored", t, re.I)), None)
+        close = next(((x, y) for t, x, y in texts if t.lower() == "close"), None)
+        if msg:
+            click_at(*msg)
+        elif close:
+            click_at(*close)
+        elif menu_open(texts):
+            tab = next(((x, y) for t, x, y in texts if norm(t) == "menu"), None)
+            if tab:
+                click_at(*tab)
+        else:
+            return
+
+
 def clear_leftovers():
     """Closes a save message or menu panel left open; no encounters come
     while either is up. True if it found something to close."""
@@ -1689,6 +1753,7 @@ def hunt(cfg, args):
     quiet_said = False
     practice_left = args.practice
     save_due, last_save, last_check = False, 0.0, 0.0
+    last_pp, pp_tries = 0.0, 0
     if args.paused:
         running.clear()
         print("pokehunt paused: Ctrl+Shift+H to start.")
@@ -1731,6 +1796,18 @@ def hunt(cfg, args):
             if web.phase != "waiting":
                 web.phase = "waiting"
                 publish()
+            if pp_for[0] and hint and not args.watch and time.time() - last_pp > 30:
+                last_pp, pp_tries = time.time(), pp_tries + 1
+                if restore_pp(cfg["catch"], Layout(hint)):
+                    say(f"  (PP restored: a {cfg['catch']['pp_item']} on {pp_for[0]})")
+                    pp_for[0], pp_tries = "", 0
+                    save_due = save_due or cfg.get("save_after_catch", True)
+                elif pp_tries >= 3:
+                    say(f"  (couldn't use a {cfg['catch']['pp_item']} 3 times: do it in Roblox; "
+                        "until then the catches just throw balls)")
+                    last_pp = time.time() + 30 * 60  # and again in half an hour
+                    pp_tries = 0
+                continue
             if save_due and not args.watch and time.time() - last_save > SAVE_EVERY:
                 save_wait[0] = 0
                 if save_game():

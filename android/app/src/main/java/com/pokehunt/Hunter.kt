@@ -474,21 +474,26 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
     private var usedItem = ""
 
     /** prefer: used instead of item, if it's a favorite in that tab. */
-    private fun useItem(lay: Layout, tab: String, item: String, target: String? = null, prefer: String? = null): Boolean {
+    /** inBattle = false: the bag is opening from the MENU already (restorePp). */
+    private fun useItem(lay: Layout, tab: String, item: String, target: String? = null, prefer: String? = null,
+                        inBattle: Boolean = true): Boolean {
         // the bag's search box would bring up the keyboard, which on a phone covers the list
         phone.keyboardHidden(true)
         try {
-            return useItemIn(lay, tab, item, target, prefer)
+            return useItemIn(lay, tab, item, target, prefer, inBattle)
         } finally {
             phone.keyboardHidden(false)
         }
     }
 
-    private fun useItemIn(lay: Layout, tab: String, wanted: String, target: String?, prefer: String?): Boolean {
+    private fun useItemIn(lay: Layout, tab: String, wanted: String, target: String?, prefer: String?,
+                          inBattle: Boolean): Boolean {
         var item = wanted
-        ensureBattle(lay)
-        trace("bag: opening it for $item")
-        tap(lay.pt(Ref.BAG))
+        if (inBattle) {
+            ensureBattle(lay)
+            trace("bag: opening it for $item")
+            tap(lay.pt(Ref.BAG))
+        }
         val split = lay.pt(Ref.BAG_SPLIT, 0.0).x
         val v = lay.s * lay.cal.ky  // screen px per reference px, down
         var step = "tab"
@@ -521,7 +526,7 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
                 Reader.findTab(texts, "Pokeballs", split, img.width) != null
             missing = if (bagUp) 0 else missing + 1
             if (step in listOf("tab", "item") && missing >= 3 && now() - openedAt > 2) {
-                if (reopened || !Vision.menuReady(img, lay)) {
+                if (reopened || !inBattle || !Vision.menuReady(img, lay)) {
                     trace("bag: it isn't open anymore" + if (texts.any { "tap here to chat" in it.text.lowercase() })
                         " (the chat window is open)" else "")
                     break
@@ -812,7 +817,6 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
         var turns = 0
         var drowsy = false
         var heals = 0
-        var elixirs = 0
         var cur = enc
         // the first ball is a Park Ball if one is favorited in the bag (not in debug mode)
         var park = if (cfg.flag("park_ball") && !debugMode) "Park Ball" else null
@@ -833,18 +837,15 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
                 ball = cfg.str("asleep_ball")
             } else if (cur.status.isNotEmpty()) {
                 ball = cfg.str("awake_ball")  // poisoned etc.: Yawn can't put it to sleep
-            } else if (!Rules.sameWord(cfg.str("sleep_with"), lead)) {
-                ball = cfg.str("awake_ball")  // only the Yawn user puts it to sleep; others just throw
+            } else if (!Rules.sameWord(cfg.str("sleep_with"), lead) || ppFor.isNotEmpty()) {
+                ball = cfg.str("awake_ball")  // only the Yawn user puts it to sleep, with PP left; others just throw
             } else {
                 val move = cfg.str(if (drowsy) "guard_move" else "sleep_move")
                 val used = useMove(lay, move)
                 if (used == "used") {
                     drowsy = !drowsy
-                } else if (used == "no pp" && elixirs < 3) {
-                    trace("$move is out of PP: ${cfg.str("pp_item")}")
-                    if (!useItem(lay, "Recovers", cfg.str("pp_item"), lead)) return "no bag" to "${cfg.str("pp_item")} failed"
-                    elixirs++
                 } else {
+                    if (used == "no pp") needPp(lead, move)
                     ball = cfg.str("awake_ball")
                 }
             }
@@ -979,6 +980,68 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
 
     private val SAVE_WAIT = Regex("wait\\s+(\\d+)\\s+more\\s+second", RegexOption.IGNORE_CASE)
     private var saveWait = 0  // s the game said to wait before saving again
+
+    /** The Pokemon whose moves ran out of PP: the PP item, once the battle is over. */
+    @Volatile private var ppFor = ""
+
+    /** A move is out of PP. The game takes the PP item only outside battles,
+     *  so it's used between encounters (restorePp); balls until then. */
+    private fun needPp(lead: String, move: String) {
+        if (ppFor.isNotEmpty()) return
+        ppFor = lead.ifEmpty { cfg.str("sleep_with") }
+        Log.print("  $move is out of PP: a ${cfg.str("pp_item")} on $ppFor after this battle " +
+                  "(the game takes it only outside battles)")
+    }
+
+    /** MENU -> Bag -> Recovers -> the PP item -> Use -> the Pokemon, between
+     *  encounters, then the bag and the menu closed again. lay: the last
+     *  battle's, for where the bag's parts are. True once used. */
+    private fun restorePp(lay: Layout): Boolean {
+        var f = grab()
+        var texts = screenTexts(f)
+        val tab = menuTab(texts)
+        if (tab == null || Vision.findMute(f) != null) return false
+        trace("pp: MENU at (${tab.x.toInt()}, ${tab.y.toInt()})")
+        tap(tab)
+        val end = now() + 8
+        while (now() < end) {
+            nap(0.4)
+            f = grab()
+            texts = screenTexts(f)
+            if (closeChat(f, texts)) continue
+            if (Vision.findMute(f) != null) return false  // an encounter came first
+            val hit = texts.firstOrNull { Rules.norm(it.text) == "bag" }
+            if (hit != null && menuOpen(texts)) {
+                val at = menuButton(hit, texts, retry = false)
+                trace("pp: tapping Bag at (${at.x.toInt()}, ${at.y.toInt()})")
+                tap(at)
+                val used = useItem(lay, "Recovers", cfg.str("pp_item"), ppFor, inBattle = false)
+                closeAfterItem()
+                return used
+            }
+        }
+        Log.say("  (couldn't open the Bag from the MENU: ${phone.savePicture(phone.png(f, null, 1200), "pp-menu")})")
+        clearLeftovers()
+        return false
+    }
+
+    /** After an item outside battle: its message tapped away, the bag's
+     *  Close, the MENU's tab, until neither is up. */
+    private fun closeAfterItem() {
+        val end = now() + 10
+        while (now() < end) {
+            nap(0.5)
+            val texts = screenTexts(grab())
+            val msg = texts.firstOrNull { "restored" in it.text.lowercase() || "recovered" in it.text.lowercase() }
+            val close = texts.firstOrNull { it.text.equals("close", true) }
+            when {
+                msg != null -> tap(msg)
+                close != null -> tap(close)
+                menuOpen(texts) -> menuTab(texts)?.let { tap(it) }
+                else -> return
+            }
+        }
+    }
 
     /** Closes a save message or menu panel left open; no encounters come
      *  while either is up. True if it found something to close. */
@@ -1218,7 +1281,7 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
                     "ball" -> "Throwing a $name"
                     "move" -> "Using $name"
                     "heal" -> "Using a ${cfg.str("heal_item")}"
-                    "pp" -> "Using a ${cfg.str("pp_item")}"
+                    "pp" -> "A ${cfg.str("pp_item")} after this battle"
                     "run" -> "Running"
                     else -> ""
                 }
@@ -1243,8 +1306,10 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
                         }
                     }
                     "heal" -> useItem(lay, "Recovers", cfg.str("heal_item"), webLead.name)
-                    "pp" -> useItem(lay, "Recovers", cfg.str("pp_item"), webLead.name).also { used ->
-                        if (used) setMoves(webMoves.map { it.copy(pp = it.max ?: it.pp) })
+                    "pp" -> {  // the game takes it only outside battles
+                        needPp(webLead.name, "a move")
+                        webError = "The game takes a ${cfg.str("pp_item")} only outside battles: it's used after this one"
+                        false  // no turn taken: the page shows that, and the battle goes on
                     }
                     else -> {  // run: taps Run until the battle is over
                         webDone = cmd.optInt("seq")
@@ -1304,6 +1369,8 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
         var quietSaid = false
         var saveDue = false
         var lastSave = 0.0
+        var lastPp = 0.0
+        var ppTries = 0
         var lastCheck = 0.0
         var firstLook = true
         var lastSeen = now()
@@ -1366,6 +1433,24 @@ class Hunter(private val phone: Phone, private val cfg: Config, private val watc
                 if (webPhase != "waiting") {
                     webPhase = "waiting"
                     publish()
+                }
+                val last = hint
+                if (ppFor.isNotEmpty() && last != null && !watch && now() - lastPp > 30) {
+                    lastPp = now()
+                    ppTries++
+                    val who = ppFor
+                    if (restorePp(Layout(last, cal))) {
+                        Log.say("  (PP restored: a ${cfg.str("pp_item")} on $who)")
+                        ppFor = ""
+                        ppTries = 0
+                        saveDue = saveDue || cfg.saveAfterCatch
+                    } else if (ppTries >= 3) {
+                        Log.say("  (couldn't use a ${cfg.str("pp_item")} 3 times: do it in Roblox; " +
+                                "until then the catches just throw balls)")
+                        lastPp = now() + 30 * 60  // and again in half an hour
+                        ppTries = 0
+                    }
+                    continue
                 }
                 if (saveDue && !watch && now() - lastSave > SAVE_EVERY) {
                     saveWait = 0
