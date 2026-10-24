@@ -17,6 +17,7 @@ import android.graphics.drawable.GradientDrawable
 import android.media.AudioManager
 import android.media.RingtoneManager
 import android.media.ToneGenerator
+import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.VibrationEffect
@@ -26,6 +27,8 @@ import android.view.Display
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.WindowManager
+import android.net.Uri
+import android.widget.Toast
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.TextView
@@ -74,7 +77,7 @@ class HuntService : AccessibilityService(), Phone {
     @Volatile private var tapping = false
     @Volatile private var tappedAt = 0.0
     @Volatile private var touched = 0.0
-    private var button: TextView? = null
+    private var button: PillView? = null
 
     override fun onServiceConnected() {
         instance = this
@@ -88,6 +91,17 @@ class HuntService : AccessibilityService(), Phone {
     }
 
     override fun typeText(text: String): Boolean = runCatching {
+        // Android 13+: this service's own input method types into whatever has the keyboard
+        // (Roblox draws its text boxes itself: Android has no field there to set the text of,
+        // so the bag's search was never typed and the list was scrolled instead)
+        if (Build.VERSION.SDK_INT >= 33) {
+            val ic = inputMethod?.currentInputConnection
+            if (ic != null) {
+                ic.deleteSurroundingText(200, 200)  // what was in it: gone first
+                ic.commitText(text, 1, null)
+                return@runCatching true
+            }
+        }
         val field = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return@runCatching false
         if (!field.isEditable) return@runCatching false
         val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text) }
@@ -170,15 +184,20 @@ class HuntService : AccessibilityService(), Phone {
 
     /** Someone logged in with this phone's code. */
     override fun websiteLogin() {
-        val title = "A browser logged in to Hunt"
-        val text = "It can watch and battle for this phone. Wasn't you? Open Hunt and tap Log out browsers."
+        val title = "A browser logged in to Poopihunt"
+        val text = "It can watch and battle for this phone. Wasn't you? Tap here to log every browser out."
         Log.print("  (website: ${title.lowercase()})")
+        val logOut = android.app.PendingIntent.getActivity(this, 3,
+            Intent(this, MainActivity::class.java).putExtra("logout", true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT)
         val n = NotificationCompat.Builder(this, "website")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle(title)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setContentIntent(logOut)
+            .setAutoCancel(true)
             .build()
         runCatching { getSystemService(NotificationManager::class.java).notify(2, n) }
     }
@@ -208,15 +227,14 @@ class HuntService : AccessibilityService(), Phone {
         }.start()
     }
 
-    /** A small square ON / OFF button floating over Roblox; drag it out of the
-     *  way. It also hears every touch outside itself, which is how the hunter
-     *  notices you're back. */
-    @SuppressLint("ClickableViewAccessibility")
+    /** The pill floating over Roblox (as the desktop's): play / stop, a long press a
+     *  debug run, the website's code, the webhook; dragged by the rest of it out of the
+     *  way. It also hears every touch outside itself, which is how the hunter notices
+     *  you're back. */
     private fun showButton() {
         if (button != null) return
         val wm = getSystemService(WindowManager::class.java)
         val dp = resources.displayMetrics.density
-        val size = (40 * dp).roundToInt()  // for telling a tap from a drag
         val spot = Hunt.prefs(this)  // under the Mute button, where the last battle had it
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
@@ -234,48 +252,80 @@ class HuntService : AccessibilityService(), Phone {
             y = spot.getInt("button_y", resources.displayMetrics.heightPixels / 5)
         }
         buttonParams = params
-        val b = TextView(this).apply {
-            gravity = Gravity.CENTER
-            textSize = 12f
-            letterSpacing = 0.08f
-            minWidth = (48 * dp).roundToInt()  // still easy to hit
-            minHeight = (32 * dp).roundToInt()
-            setPadding((12 * dp).roundToInt(), (6 * dp).roundToInt(), (12 * dp).roundToInt(), (6 * dp).roundToInt())
-            background = GradientDrawable().apply {
-                setColor(0x8C000000.toInt())  // see-through black: readable over any scene
-                cornerRadius = 4 * dp
+        val pill = PillView(this)
+        var from = 0 to 0
+        pill.actions = object : PillView.Actions {
+            override fun play() = onButton()
+            override fun debug() = onDebug()
+            override fun code() {
+                if (pill.code.isNotEmpty()) startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://poopihunt.xyz/app"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             }
-        }
-        var downX = 0f; var downY = 0f; var startX = 0; var startY = 0; var moved = false
-        var ours = false  // the hunter's own tap or swipe landed on it: not yours
-        b.setOnTouchListener { _, e ->
-            when (e.actionMasked) {
-                MotionEvent.ACTION_OUTSIDE -> {
-                    // the hunter's own taps land outside too
-                    if (!tapping && now() - tappedAt > 0.5) {
-                        // Android says the screen was touched, not where
-                        if (hunter != null && now() - touched > 3) Log.print("  (you touched the screen)")
-                        touched = now()
-                    }
-                }
-                MotionEvent.ACTION_DOWN -> {
-                    downX = e.rawX; downY = e.rawY; startX = params.x; startY = params.y; moved = false
-                    ours = tapping || now() - tappedAt < 0.3
-                }
-                MotionEvent.ACTION_MOVE -> if (!ours) {
-                    if (abs(e.rawX - downX) + abs(e.rawY - downY) > size / 4) moved = true
-                    params.x = startX - (e.rawX - downX).toInt()  // x counts from the right edge
-                    params.y = startY + (e.rawY - downY).toInt()
-                    wm.updateViewLayout(b, params)
-                }
-                MotionEvent.ACTION_UP -> if (ours) Unit else if (!moved) onButton() else dragged = true
+            override fun newCode() {
+                val h = hunter?.takeIf { it.linked() } ?: return
+                Thread {
+                    val ok = runCatching { h.newCode() }.getOrDefault(false)
+                    main { Toast.makeText(this@HuntService, if (ok) "New code: the old one won't work"
+                                          else "No connection to poopihunt.xyz", Toast.LENGTH_SHORT).show() }
+                }.start()
             }
-            true
+            override fun hook(url: String) {
+                val said = Hunt.saveWebhook(this@HuntService, url) ?: return
+                pill.hook = Hunt.webhook(this@HuntService)
+                pill.showHook(false)
+                Toast.makeText(this@HuntService, said, Toast.LENGTH_SHORT).show()
+            }
+            override fun editing(on: Boolean) {
+                // the window takes the keyboard only while the box is being typed in
+                params.flags = if (on) params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+                               else params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                if (button != null) wm.updateViewLayout(pill, params)
+            }
+            override fun drag(dx: Float, dy: Float, done: Boolean) {
+                if (from == (0 to 0) || (dx == 0f && dy == 0f)) from = params.x to params.y
+                params.x = from.first - dx.toInt()  // x counts from the right edge
+                params.y = from.second + dy.toInt()
+                wm.updateViewLayout(pill, params)
+                if (done) {
+                    dragged = true
+                    from = 0 to 0
+                    Hunt.prefs(this@HuntService).edit().putInt("button_x", params.x).putInt("button_y", params.y).apply()
+                }
+            }
+            override fun outside() {
+                // the hunter's own taps land outside too; Android says the screen was touched, not where
+                if (!tapping && now() - tappedAt > 0.5) {
+                    if (hunter != null && now() - touched > 3) Log.print("  (you touched the screen)")
+                    touched = now()
+                }
+            }
+            override fun ours() = tapping || now() - tappedAt < 0.3
         }
-        wm.addView(b, params)
-        button = b
+        pill.hook = Hunt.webhook(this)
+        pill.showHook(false)
+        wm.addView(pill, params)
+        button = pill
         refreshButton()
     }
+
+    /** A long press on play: a debug run on the next encounter (it hunts at once); again
+     *  while it's on calls it off. */
+    private fun onDebug() {
+        val h = hunter
+        when {
+            h == null -> {
+                debugNext = true
+                onButton()
+            }
+            h.testing() -> h.setTest(false)
+            else -> {
+                h.setTest(true)
+                if (!h.running()) h.toggle()
+            }
+        }
+    }
+
+    @Volatile private var debugNext = false  // a debug run asked for before the hunt was there
 
     private var buttonParams: WindowManager.LayoutParams? = null
     @Volatile private var placedUnder: Rect? = null
@@ -307,10 +357,26 @@ class HuntService : AccessibilityService(), Phone {
 
     private fun refreshButton() {
         val b = button ?: return
-        val on = hunter?.running() == true
-        b.text = if (starting) "…" else if (on) "● ON" else "OFF"
-        b.setTextColor(if (on) Color.WHITE else 0xFFA0A0A0.toInt())
-        b.postDelayed({ refreshButton() }, 300)
+        val h = hunter
+        if (debugNext && h != null) {
+            h.setTest(true)
+            debugNext = false
+        }
+        b.state = when {
+            starting -> PillView.State.STARTING
+            h != null && h.running() -> PillView.State.HUNTING
+            else -> PillView.State.OFF
+        }
+        b.testing = debugNext || h?.testing() == true
+        val remote = h?.takeIf { it.linked() }
+        b.code = remote?.code() ?: ""
+        b.words = when {
+            remote != null && remote.loggedIn() -> "In use"
+            h != null -> ""
+            else -> "Off"
+        }
+        b.invalidate()
+        b.postDelayed({ refreshButton() }, 250)
     }
 
     private fun hideButton() {

@@ -6,4 +6,5 @@
     android:canPerformGestures="true"
     android:canRetrieveWindowContent="true"
     android:canTakeScreenshot="true"
+    android:accessibilityFlags="flagInputMethodEditor"
     android:notificationTimeout="200" />

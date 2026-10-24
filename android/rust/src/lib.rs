@@ -293,6 +293,11 @@ impl Hunter {
         self.control.set_test(on);
     }
 
+    /// A debug run on its way or going (play shows the bug till it's done).
+    pub fn testing(&self) -> bool {
+        self.control.testing()
+    }
+
     /// The layout fitted again at the next encounter, and drawn (Pictures/Hunt).
     pub fn calibrate_next(&self) {
         self.control.calibrate_next();

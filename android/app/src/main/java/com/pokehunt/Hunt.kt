@@ -24,12 +24,27 @@ object Hunt {
         key
     }
 
-    fun watchOnly(ctx: Context) = prefs(ctx).getBoolean("watch", false)
-
-    /** Catches every encounter, then saves; screenshots each catch turn. */
-    fun debugMode(ctx: Context) = prefs(ctx).getBoolean("debug", false)
-
     val running get() = HuntService.instance?.hunter != null
+
+    fun webhook(ctx: Context): String =
+        runCatching { org.json.JSONObject(configFile(ctx).readText()).optString("webhook", "") }.getOrDefault("")
+
+    /** The pill's webhook box: saved in config.json (a hunt that's on starts again with
+     *  it). What to say about it, or null for nothing to save. */
+    fun saveWebhook(ctx: Context, url: String): String? {
+        if (url == webhook(ctx) || url == "Webhook on") return null
+        if (url.isNotEmpty() && !Regex("^https://(ptb\\.|canary\\.)?discord(app)?\\.com/api/webhooks/\\d+/[\\w-]+$").matches(url))
+            return "Not a Discord webhook"
+        val file = configFile(ctx)
+        val cfg = runCatching { org.json.JSONObject(file.readText()) }.getOrNull() ?: return "config.json has a mistake"
+        cfg.put("webhook", url)
+        file.writeText(cfg.toString(2))
+        if (running) {  // the hunt reads it when it starts
+            stop()
+            Thread { start(ctx) }.start()
+        }
+        return if (url.isEmpty()) "Webhook off" else "Webhook saved"
+    }
 
     /** Starts a hunt. Blocks for a moment (it checks that screenshots work),
      *  so not on the main thread. Null once started, else what's missing:
@@ -40,7 +55,7 @@ object Hunt {
         val cfg = configFile(ctx).readText()
         com.pokehunt.core.checkConfig(cfg)?.let { return "What to hunt has a mistake: $it" }
         if (CaptureService.instance == null && !service.screenshotsWork()) return "capture"
-        service.startHunt(cfg, watchOnly(ctx), debugMode(ctx))
+        service.startHunt(cfg, watch = false)  // (a debug run is play's long press, not a mode)
         return null
     }
 
