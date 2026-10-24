@@ -27,9 +27,9 @@ import android.widget.TextView
 import android.widget.Toast
 import java.io.File
 
-/** Setting up, and nothing else: what Poopihunt needs allowed, each a row that opens
- *  where it's allowed, the Discord webhook, then Open Roblox. The hunt itself is the
- *  pill floating over Roblox (HuntService), which also keeps it up to date. */
+/** Setting up, and nothing else: the title, a pill for each permission it needs (what
+ *  it says, and a tap opens where it's allowed), and the Discord webhook's. The hunt
+ *  itself is the pill floating over Roblox (HuntService), which keeps it up to date. */
 class MainActivity : Activity() {
     private val ui = Handler(Looper.getMainLooper())
     private val CAPTURE = 7
@@ -45,7 +45,7 @@ class MainActivity : Activity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             setTextColor(INK)
             setHintTextColor(DIM)
-            hint = "Discord webhook (for finds)"
+            hint = "Paste Discord webhook here"
             isSingleLine = true
             imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_DONE
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
@@ -75,26 +75,22 @@ class MainActivity : Activity() {
     private fun pill(fill: Int) = RippleDrawable(ColorStateList.valueOf(0x40808080),
         GradientDrawable().apply { setColor(fill); cornerRadius = dp(28).toFloat() }, null)
 
-    /** One thing to allow: its name, a word on the right ("On" or what to tap), and a
-     *  line under it when that helps. */
-    private fun row(name: String, done: Boolean, todo: String, tip: String? = null, f: () -> Unit) =
+    /** One thing to allow: its name and a word on the right ("On", or what to tap). */
+    private fun row(name: String, done: Boolean, todo: String, f: () -> Unit) =
         LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            val line = LinearLayout(this@MainActivity).apply {
-                gravity = Gravity.CENTER_VERTICAL
-                background = pill(BOXED)
-                setPadding(dp(22), dp(16), dp(22), dp(16))
-                addView(words(name, 16f, INK, true), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-                addView(words(if (done) "On" else todo, 15f, if (done) DIM else INK))
-                if (!done) setOnClickListener { f() }
-            }
-            addView(line, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-            if (tip != null && !done) addView(words(tip, 13f, DIM).apply { setPadding(dp(22), dp(8), dp(22), 0) })
+            gravity = Gravity.CENTER_VERTICAL
+            background = pill(BOXED)
+            setPadding(dp(22), dp(16), dp(22), dp(16))
+            addView(words(name, 16f, INK, true), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+            addView(words(if (done) "On" else todo, 15f, if (done) DIM else INK))
+            if (!done) setOnClickListener { f() }
         }
 
     override fun onCreate(saved: Bundle?) {
         super.onCreate(saved)
         Log.file = File(filesDir, "hunt.log")
+        // notifications (finds, browsers logging in): Android's own question, the first time
+        if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         val title = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
             addView(ImageView(this@MainActivity).apply {
@@ -114,18 +110,13 @@ class MainActivity : Activity() {
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(title)
-            addView(words("Allow these, then open Roblox: the pill floats over the game.", 15f, DIM).apply {
-                setPadding(0, dp(10), 0, dp(24))
-            })
+            addView(View(this@MainActivity), LinearLayout.LayoutParams(1, dp(24)))
             addView(rows, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         }
-        val build = words(packageManager.getPackageInfo(packageName, 0).versionName ?: "", 12f, Color.rgb(0x55, 0x55, 0x55))
         val width = minOf(resources.displayMetrics.widthPixels - dp(40), dp(440))
         setContentView(FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
             addView(col, FrameLayout.LayoutParams(width, WRAP_CONTENT, Gravity.CENTER))
-            addView(build, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
-                .apply { bottomMargin = dp(20) })
             // Android 15+ draws apps under the status and navigation bars
             setOnApplyWindowInsetsListener { v, insets ->
                 val bars = insets.getInsets(WindowInsets.Type.systemBars())
@@ -176,42 +167,17 @@ class MainActivity : Activity() {
         if (hookRow.hasFocus()) return  // (being typed in)
         rows.removeAllViews()
         val gap = { rows.addView(View(this), LinearLayout.LayoutParams(1, dp(12))) }
-        rows.addView(row("Accessibility", HuntService.instance != null, "Turn on",
-                         "Greyed out? Settings › Apps › Poopihunt › ⋮ › Allow restricted settings") {
+        rows.addView(row("Accessibility", HuntService.instance != null, "Turn on") {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         })
-        if (Build.VERSION.SDK_INT >= 33) {
-            gap()
-            val on = checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-            rows.addView(row("Notifications", on, "Allow", "For finds, and browsers logging in") {
-                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
-            })
-        }
         // some Androids (emulators especially) give blank screenshots: then it watches the
         // screen through screen capture, asked for once a hunt found that out
         if (Hunt.prefs(this).getBoolean("needs_capture", false)) {
             gap()
-            rows.addView(row("Screen capture", CaptureService.instance != null, "Allow",
-                             "This phone's screenshots come out blank without it") { askCapture() })
+            rows.addView(row("Screen capture", CaptureService.instance != null, "Allow") { askCapture() })
         }
         gap()
-        rows.addView(row("Install updates", packageManager.canRequestPackageInstalls(), "Allow",
-                         "So it keeps itself up to date") {
-            startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, android.net.Uri.parse("package:$packageName")))
-        })
-        gap()
         rows.addView(hookRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-        rows.addView(View(this), LinearLayout.LayoutParams(1, dp(28)))
-        rows.addView(words("Open Roblox", 17f, Color.BLACK, true).apply {
-            gravity = Gravity.CENTER
-            background = pill(INK)
-            setPadding(dp(22), dp(18), dp(22), dp(18))
-            setOnClickListener {
-                val go = packageManager.getLaunchIntentForPackage(HuntService.ROBLOX)
-                if (go == null) Toast.makeText(this@MainActivity, "Roblox isn't installed", Toast.LENGTH_SHORT).show()
-                else startActivity(go)
-            }
-        }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
     }
 
     /** Screen capture: Android asks; once it's up the hunt starts, and Roblox comes up. */
