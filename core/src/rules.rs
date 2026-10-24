@@ -1,4 +1,4 @@
-//! What's wanted: config.json's rules ({"species": "Tympole", "shiny": true}),
+//! What's wanted: rules ({"reskin": "any", "gradient": "any"}, built in; the tests' own too),
 //! matched against what was read, forgiving a misread letter.
 
 use serde_json::Value;

@@ -7,16 +7,10 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
-import android.graphics.drawable.GradientDrawable
 import android.os.SystemClock
-import android.text.InputType
 import android.util.TypedValue
 import android.view.GestureDetector
-import android.view.Gravity
 import android.view.MotionEvent
-import android.view.inputmethod.EditorInfo
-import android.view.inputmethod.InputMethodManager
-import android.widget.EditText
 import android.widget.FrameLayout
 import kotlin.math.max
 import kotlin.math.min

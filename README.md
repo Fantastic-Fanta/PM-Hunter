@@ -104,7 +104,8 @@ Pushes build it too, as a check. On a Mac the same window:
 
 (`HUNT_WATCH=1` too, for one that never clicks; `--start` hunts at once,
 `HUNT_PREVIEW=1` never does; `--smoke --intro` goes through its states with
-the opening and the closing.) The icon: `python windows/make_icon.py`.
+the opening and the closing.) The icons, every one from `windows/hunt-icon.png`
+(Windows', the window's, Android's, the Mac's): `python windows/make_icon.py`.
 
 Published builds report debug runs in full (their lines, calibration, the
 first 10 clicks, each step's picture) and otherwise only what goes wrong (the
@@ -119,37 +120,34 @@ the main screen.
 
 ## Android (just the phone, no computer)
 
-The app is in `android/`. `Hunt.apk` is the built copy.
+The app is in `android/`; the download is on https://poopihunt.xyz.
 
-1. Put `Hunt.apk` on the phone (Google Drive, a USB cable, Discord, ...) and
-   open it. Allow installing from that app when Android asks.
-2. Open Hunt and tap **Turn on Hunt**, then switch Hunt on. If it's
-   greyed out, go to Settings > Apps > Hunt, tap ⋮ (top right) > **Allow
-   restricted settings**, and try again.
+1. Install it on the phone (allow installing from the browser when Android asks).
+2. Open Poopihunt: a pill shows for each thing still to allow. **Accessibility ·
+   Turn on**: switch Poopihunt on (greyed out? Settings > Apps > Poopihunt, ⋮
+   top right > **Allow restricted settings**, and again). Some phones
+   (emulators especially) give blank screenshots: then **Screen capture ·
+   Allow** shows too. Each pill goes once it's on.
 3. Paste your Discord webhook into **Paste Discord webhook here**.
-4. Open Roblox. A small **OFF** button floats at the right whenever Roblox is
-   on screen: tap it to start hunting (it turns **ON**), tap again to stop. Drag
-   it out of the way if it covers something. **Start** in the app does the same.
-   Some Androids (emulators especially) give apps blank screenshots; then
-   Android asks "Start recording or casting with Hunt?": tap **Start now**,
-   it's how Hunt sees the game there.
+4. Open Roblox. The pill floats over it, right after Roblox's menu and chat
+   buttons: play starts hunting (it turns to stop), a long press is a debug
+   run (the bug), the website's code beside it copies when tapped (a long press
+   makes a new one). Drag it anywhere; it stays there. The Quick Settings tile
+   is the same play / stop.
 
-When it finds one, the phone vibrates and rings. It keeps the battle alive
-until you touch the screen.
+When it finds one the pill turns white, the phone vibrates and rings, and it
+keeps the battle alive until you touch the screen.
 
 Needs Android 11 or newer. To find a ball, Full Restore or Max Elixir it types
-its name into the bag's search box (keeping the keyboard hidden meanwhile),
-and scrolls through that tab of the bag if typing doesn't work.
-
-Under **More**: **Calibrate** draws the fitted layout on a
-picture in Pictures/Hunt, and **Share hunt log** sends what it did. Send
-me those and any `trouble` pictures if something goes wrong.
+its name into the bag's search box (on Android 13+ through its own input
+method; Roblox draws its text boxes itself) and scrolls through that tab of the
+bag if typing doesn't work. Problems go to the debug channel.
 
 ## Website: watch and battle from anywhere
 
 https://poopihunt.xyz/app. Hunt gets a 6-character code each time it starts:
-the Android app shows it under the status (with **New code** and **Log out
-browsers** buttons), the Mac/Windows window prints it (Ctrl+Shift+N for a new
+the phone's pill shows it (a long press for a new one; tapping the "a browser
+logged in" notification logs every browser out), the Mac/Windows pill shows it (Ctrl+Shift+N for a new
 one, Ctrl+Shift+L logs every browser out; it never goes to the debug
 channel). Type the code on the site and that browser is logged in for 30
 days. A code works once; the phone (or window) says when a browser logs in.
@@ -170,10 +168,10 @@ nginx's poopihunt.xyz site) and `site/app/index.html` (the page):
 pretend phone for trying the page.
 
 Updates: `./publish-android.sh` builds the app and publishes it on
-https://poopihunt.xyz (a download page, `Hunt.apk` and `version.json`;
-hunt.stingray-digital.online serves the same, for older builds). Every
-phone shows **Update** the next time Hunt opens (Android asks once to allow
-installs from Hunt). The bottom of the app says which build a phone has.
+https://poopihunt.xyz (a download page, the APK and `version.json`;
+hunt.stingray-digital.online serves the same, for older builds). A phone
+updates itself when you press stop on the pill, never mid-hunt (Android asks
+once to allow it); the debug channel hears "updated: old → new".
 poopihunt.xyz lives on the stingray server in its own folder
 (`/srv/poopihunt.xyz`, owner `poopihunt`, nginx site `poopihunt.xyz`, the API
 as the `poopihunt-api` service), apart from stingray-digital.online.

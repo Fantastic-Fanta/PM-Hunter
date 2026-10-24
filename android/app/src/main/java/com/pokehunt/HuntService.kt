@@ -2,18 +2,13 @@ package com.pokehunt
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
-import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.ContentValues
 import android.content.Intent
 import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
-import android.graphics.drawable.GradientDrawable
 import android.media.AudioManager
 import android.media.RingtoneManager
 import android.media.ToneGenerator
@@ -25,13 +20,10 @@ import android.os.Vibrator
 import android.provider.MediaStore
 import android.view.Display
 import android.view.Gravity
-import android.view.MotionEvent
 import android.view.WindowManager
-import android.net.Uri
 import android.widget.Toast
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
@@ -49,7 +41,6 @@ import java.util.Locale
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 

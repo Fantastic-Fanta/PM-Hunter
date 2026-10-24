@@ -499,7 +499,7 @@ impl Hunt {
         }
     }
 
-    /// Catches with the plan from config.json "catch": a first-turn ball, then
+    /// Catches with the catch plan (built in: config::catch_plan): a first-turn ball, then
     /// Yawn, Protect while it gets drowsy, and the sleep ball once it's asleep;
     /// Timer Balls instead once timer_after turns have gone by. Statused
     /// targets (Yawn can't work) get the other ball. Heals and restores PP
