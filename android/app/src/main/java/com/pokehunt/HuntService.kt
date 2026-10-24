@@ -88,13 +88,13 @@ class HuntService : AccessibilityService(), Phone {
             NotificationChannel("website", "Website logins", NotificationManager.IMPORTANCE_HIGH))
         robloxShown = rootInActiveWindow?.packageName == ROBLOX
         updateButton()
-        lookForUpdate()
     }
 
     @Volatile private var updating = false
 
-    /** A newer build on the website (when Poopihunt starts, and whenever a hunt stops or
-     *  pauses): downloaded and installed on its own, the pill a progress bar meanwhile. */
+    /** A newer build on the website, only when you press stop on the pill (never in the
+     *  middle of a hunt, a find or a debug run): downloaded and installed on its own, the
+     *  pill a progress bar meanwhile. */
     private fun lookForUpdate() {
         if (updating || hunter?.running() == true) return
         updating = true
@@ -217,7 +217,6 @@ class HuntService : AccessibilityService(), Phone {
         thread = null
         updateButton()
         Hunt.refreshTile(this)
-        lookForUpdate()
     }
 
     private fun main(f: () -> Unit) = android.os.Handler(mainLooper).post(f)
@@ -254,9 +253,11 @@ class HuntService : AccessibilityService(), Phone {
      *  opens the app. */
     private fun onButton() {
         hunter?.let {
-            Log.print("  (ON / OFF tapped)")
+            Log.print("  (play / stop tapped)")
+            val was = it.running()
             it.toggle()
             Hunt.refreshTile(this)
+            if (was) lookForUpdate()  // stopped by you: the one time it updates
             return
         }
         if (starting) return
@@ -357,7 +358,6 @@ class HuntService : AccessibilityService(), Phone {
     }
 
     @Volatile private var debugNext = false  // a debug run asked for before the hunt was there
-    private var wasOn = false
 
     private var buttonParams: WindowManager.LayoutParams? = null
     @Volatile private var placedUnder: Rect? = null
@@ -395,9 +395,6 @@ class HuntService : AccessibilityService(), Phone {
             h.setTest(true)
             debugNext = false
         }
-        val on = h != null && h.running()
-        if (wasOn && !on) lookForUpdate()  // a hunt paused (you, a find, a debug run that went wrong)
-        wasOn = on
         b.state = when {
             starting -> PillView.State.STARTING
             h != null && h.running() -> PillView.State.HUNTING
