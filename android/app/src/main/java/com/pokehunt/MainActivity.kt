@@ -92,7 +92,7 @@ class MainActivity : Activity() {
         // notifications (finds, browsers logging in): Android's own question, the first time
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         val title = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
+            gravity = Gravity.CENTER
             addView(ImageView(this@MainActivity).apply {
                 setImageResource(R.mipmap.ic_launcher)
                 // a rounded square, as an app's icon
@@ -109,7 +109,7 @@ class MainActivity : Activity() {
         rows = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addView(title)
+            addView(title, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             addView(View(this@MainActivity), LinearLayout.LayoutParams(1, dp(24)))
             addView(rows, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         }
@@ -166,17 +166,17 @@ class MainActivity : Activity() {
     private fun show() {
         if (hookRow.hasFocus()) return  // (being typed in)
         rows.removeAllViews()
-        val gap = { rows.addView(View(this), LinearLayout.LayoutParams(1, dp(12))) }
-        rows.addView(row("Accessibility", HuntService.instance != null, "Turn on") {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        })
+        // only what's still to allow (a pill goes once it's on), then the webhook
+        if (HuntService.instance == null) {
+            rows.addView(row("Accessibility", false, "Turn on") { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) })
+            rows.addView(View(this), LinearLayout.LayoutParams(1, dp(12)))
+        }
         // some Androids (emulators especially) give blank screenshots: then it watches the
         // screen through screen capture, asked for once a hunt found that out
-        if (Hunt.prefs(this).getBoolean("needs_capture", false)) {
-            gap()
-            rows.addView(row("Screen capture", CaptureService.instance != null, "Allow") { askCapture() })
+        if (Hunt.prefs(this).getBoolean("needs_capture", false) && CaptureService.instance == null) {
+            rows.addView(row("Screen capture", false, "Allow") { askCapture() })
+            rows.addView(View(this), LinearLayout.LayoutParams(1, dp(12)))
         }
-        gap()
         rows.addView(hookRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
     }
 
