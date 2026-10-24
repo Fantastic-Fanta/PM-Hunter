@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 /// What the Mac reads in samples/ (species, shiny, tint, reskin, gradient); a new
 /// computer should read the same. Levels are left out: the Mac misses a few.
-pub const EXPECTED: [(&str, (&str, bool, bool, &str, &str)); 9] = [
+pub const EXPECTED: [(&str, (&str, bool, bool, &str, &str)); 10] = [
     ("dewpider-mirage.png", ("Dewpider", false, false, "", "Mirage")),
     ("marill-inferno-tint.png", ("Marill", false, true, "INFERNO", "")),
     ("quaxly-shiny.png", ("Quaxly", true, false, "", "")),
@@ -23,6 +23,7 @@ pub const EXPECTED: [(&str, (&str, bool, bool, &str, &str)); 9] = [
     ("phone16-pichu-shiny.png", ("Pichu-Spiky-eared", true, false, "", "")),
     ("entei-galaxy.png", ("Entei", false, false, "GALAXY", "")),
     ("entei-plain.png", ("Entei", false, false, "", "")),
+    ("entei-wave-tint.png", ("Entei", false, true, "WAVE", "")),
 ];
 
 /// samples/: next to the program (as installed), in the folder it runs in, or
