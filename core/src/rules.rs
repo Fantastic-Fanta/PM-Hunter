@@ -243,19 +243,25 @@ pub fn show(rule: &Rule) -> String {
 /// count when any read saw them: a sparkling star comes and goes.
 pub fn settled(reads: &[Enc]) -> Option<Enc> {
     let last = reads.last()?;
+    // a read without the level agrees with one that has it (Windows reads a light "Lv. 18"
+    // only now and then: a tinted Wave Entei's reads never agreed, and it was waited on)
+    let level_ok = |a: &Enc, b: &Enc| a.level == b.level || a.level.is_empty() || b.level.is_empty();
     let run: Vec<&Enc> = {
-        let n = reads.iter().rev().take_while(|r| r.species == last.species && r.level == last.level).count();
+        let n = reads.iter().rev().take_while(|r| r.species == last.species && level_ok(r, last)).count();
         reads[reads.len() - n..].iter().collect()
     };
     let same = run.len() >= 2 && {
         let p = run[run.len() - 2];
-        p.species == last.species && p.level == last.level && p.reskin == last.reskin
+        p.species == last.species && level_ok(p, last) && p.reskin == last.reskin
             && p.gradient == last.gradient && p.status == last.status
     };
     if last.species.is_empty() || (!same && run.len() < 4) {
         return None;
     }
     let mut enc = last.clone();
+    if enc.level.is_empty() {
+        enc.level = run.iter().rev().map(|r| r.level.clone()).find(|l| !l.is_empty()).unwrap_or_default();
+    }
     if !same {
         let most = |f: fn(&Enc) -> &String| -> String {
             let seen: Vec<&String> = run.iter().map(|r| f(r)).collect();
@@ -355,6 +361,14 @@ mod tests {
         r[2].reskin = "INFERNO".into();
         r[3].reskin = "NFERNO".into();
         assert_eq!(settled(&r).unwrap().reskin, "INFERNO");
+        // the level read now and then (Windows): reads with and without it agree, and keep it
+        let mut e = enc("Entei");
+        e.reskin = "WAVE".into();
+        let mut l = e.clone();
+        l.level = "18".into();
+        assert_eq!(settled(&[l.clone(), e.clone()]).unwrap().level, "18");
+        assert_eq!(settled(&[e.clone(), l.clone(), e.clone()]).unwrap().level, "18");
+        assert_eq!(settled(&[e.clone(), e]).unwrap().level, "");
     }
 
     #[test]

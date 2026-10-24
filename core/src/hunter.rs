@@ -855,6 +855,17 @@ impl Hunt {
             if now() - start > 15.0 && !saved {
                 // never Run from something unread: it might be the one
                 let why = if chat { "chat is covering the enemy's box" } else if menu { "can't read the enemy's box" } else { "no Fight/Run menu" };
+                if menu && !chat {
+                    // what the text recognition saw there, and how it was read: to tell why from
+                    // the log (sent with the trouble), not by trying the picture on a build
+                    let texts = self.ocr(&f, Some(lay.boxed(layout::BOX)), 1.0);
+                    let tried: Vec<String> = reads.iter().rev().take(3).map(|e| e.describe()).collect();
+                    self.say(&format!("  (the box{}: {}; read as: {})",
+                                      if readable { "" } else { ", not quite in sight" },
+                                      texts.iter().map(|t| format!("{:?} at ({:.2}, {:.2})", t.text, t.x, t.y))
+                                          .collect::<Vec<_>>().join(", "),
+                                      if tried.is_empty() { "nothing yet".into() } else { tried.join(" / ") }));
+                }
                 self.trouble(&format!("{why} for 15 s, waiting"), &f);
                 saved = true;
             }
