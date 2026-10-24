@@ -51,11 +51,15 @@ class MainActivity : Activity() {
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
             background = GradientDrawable().apply { setColor(BOXED); cornerRadius = dp(28).toFloat() }
             setPadding(dp(22), dp(16), dp(22), dp(16))
-            setText(Hunt.webhook(this@MainActivity))
+            setText(short(Hunt.webhook(this@MainActivity)))
+            // the address in full only while it's being changed
+            setOnFocusChangeListener { _, focused ->
+                setText(if (focused) Hunt.webhook(this@MainActivity) else short(Hunt.webhook(this@MainActivity)))
+                if (focused) setSelection(text.length)
+            }
             setOnEditorActionListener { v, _, _ ->
                 val said = Hunt.saveWebhook(this@MainActivity, v.text.toString().trim())
                 if (said != null) Toast.makeText(this@MainActivity, said, Toast.LENGTH_SHORT).show()
-                if (said == "Not a Discord webhook") setText(Hunt.webhook(this@MainActivity))
                 clearFocus()
                 getSystemService(android.view.inputmethod.InputMethodManager::class.java).hideSoftInputFromWindow(windowToken, 0)
                 true
@@ -64,6 +68,14 @@ class MainActivity : Activity() {
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    /** A webhook's address shortened: "discord.com/…/129834…4fQz". */
+    private fun short(url: String): String {
+        val m = Regex("^https://(?:ptb\\.|canary\\.)?(discord(?:app)?\\.com)/api/webhooks/(\\d+)/([\\w-]+)$").find(url)
+            ?: return url
+        val (host, id, token) = m.destructured
+        return "$host/…/${id.take(6)}…${token.takeLast(4)}"
+    }
 
     private fun words(s: String, size: Float, color: Int, medium: Boolean = false) = TextView(this).apply {
         text = s
@@ -93,17 +105,12 @@ class MainActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         val title = LinearLayout(this).apply {
             gravity = Gravity.CENTER
+            // Clodsire, white, as on the icon
             addView(ImageView(this@MainActivity).apply {
-                setImageResource(R.mipmap.ic_launcher)
-                // a rounded square, as an app's icon
-                outlineProvider = object : android.view.ViewOutlineProvider() {
-                    override fun getOutline(v: View, o: android.graphics.Outline) =
-                        o.setRoundRect(0, 0, v.width, v.height, v.width * 0.22f)
-                }
-                clipToOutline = true
-                scaleType = ImageView.ScaleType.CENTER_CROP
-            },
-                    LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginEnd = dp(14) })
+                setImageResource(R.drawable.clodsire_mark)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                adjustViewBounds = true
+            }, LinearLayout.LayoutParams(dp(56), dp(28)).apply { marginEnd = dp(14) })
             addView(words("Poopihunt", 26f, INK, true))
         }
         rows = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }

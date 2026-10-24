@@ -7,8 +7,8 @@ import android.os.Build
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 
-/** "Hunt" in Quick Settings (swipe down from the top): tap to start or
- *  stop hunting without leaving Roblox. */
+/** "Poopihunt" in Quick Settings (swipe down from the top): play / pause, as the
+ *  pill's, without leaving Roblox. */
 class HuntTile : TileService() {
     override fun onStartListening() {
         val tile = qsTile ?: return
@@ -22,10 +22,11 @@ class HuntTile : TileService() {
         tile.updateTile()
     }
 
+    /** As the pill's play: a hunt that's on paused or going again, else one started. */
     override fun onClick() {
         Log.print("  (Quick Settings tile tapped)")
-        if (Hunt.running) {
-            Hunt.stop()
+        HuntService.instance?.hunter?.let {
+            it.toggle()
             onStartListening()
             return
         }

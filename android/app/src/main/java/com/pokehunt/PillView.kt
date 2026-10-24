@@ -52,6 +52,21 @@ class PillView(ctx: Context, private val tall: Float = 40f) : FrameLayout(ctx) {
         set(v) { if (field != v) { field = v; requestLayout() } }
     var words = ""     // in the code's place when there's no code: "Off", "In use"
         set(v) { if (field != v) { field = v; requestLayout() } }
+    var found = false  // a wanted one held for you: the pill fades to white, as the desktop's
+
+    // a word for a moment in the code's place ("Copied")
+    private var flash = ""
+    private var flashUntil = 0L
+
+    fun flash(word: String) {
+        flash = word
+        flashUntil = SystemClock.uptimeMillis() + 1200
+        requestLayout()
+        invalidate()
+        postDelayed({ requestLayout(); invalidate() }, 1250)
+    }
+
+    private val flashing get() = SystemClock.uptimeMillis() < flashUntil
     var progress: Float? = null  // an update: 0 to 1, 1 installing
 
     // the desktop pill's look (look(false))
@@ -76,6 +91,7 @@ class PillView(ctx: Context, private val tall: Float = 40f) : FrameLayout(ctx) {
     }
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val bug = context.getDrawable(R.drawable.bug)!!.mutate()
+    private val mark = context.getDrawable(R.drawable.clodsire_mark)!!.mutate()  // the opening's Clodsire
 
     // what's pressed, for the give under the finger
     private var down: String? = null
@@ -100,6 +116,11 @@ class PillView(ctx: Context, private val tall: Float = 40f) : FrameLayout(ctx) {
     }
 
     private fun ease(x: Float) = 1 - (1 - x.coerceIn(0f, 1f)).pow(3)
+
+    private fun mix(a: Int, b: Int, k: Float): Int {
+        fun m(x: Int, y: Int) = (x + (y - x) * k).toInt()
+        return Color.rgb(m(Color.red(a), Color.red(b)), m(Color.green(a), Color.green(b)), m(Color.blue(a), Color.blue(b)))
+    }
     private fun spring(x: Float): Float {
         val t = x.coerceIn(0f, 1f) - 1
         val c = 1.2f
@@ -114,6 +135,7 @@ class PillView(ctx: Context, private val tall: Float = 40f) : FrameLayout(ctx) {
 
     /** What's shown in the code's place: the code, the three dots, or a word. */
     private val labelWidth: Float get() = when {
+        flashing -> text.measureText(flash)
         code.isNotEmpty() -> text.measureText(code)
         state == State.HUNTING || state == State.STARTING -> dotsWidth
         else -> text.measureText(words)
@@ -137,10 +159,18 @@ class PillView(ctx: Context, private val tall: Float = 40f) : FrameLayout(ctx) {
 
     override fun onDraw(canvas: Canvas) {
         val t = (SystemClock.uptimeMillis() - born) / 1000f
-        // the opening: it stretches out from play's circle, what's in it fades in
-        val grow = min(1f, spring(t / 0.55f))
-        val reveal = ease((t - 0.3f) / 0.45f)
+        // the opening: Clodsire in play's circle, turning into play as the pill stretches
+        // out from it, what's in it fading in after
+        val clodsire = 1 - ease((t - 0.35f) / 0.3f)
+        val grow = min(1f, spring((t - 0.4f) / 0.55f))
+        val reveal = ease((t - 0.7f) / 0.45f)
         if (reveal < 1f) postInvalidateOnAnimation()
+        // a find: the black look fading to the white one (look(true) on the desktop)
+        val white = ease(anim("found", if (found) 1f else 0f, 0.45f))
+        val FILL = mix(this.FILL, Color.WHITE, white)
+        val INK = mix(this.INK, Color.rgb(0x11, 0x11, 0x11), white)
+        val DIM = mix(this.DIM, Color.rgb(0x6a, 0x6a, 0x6a), white)
+        val EDGE = mix(this.EDGE, Color.rgb(0xcf, 0xcf, 0xcf), white)
         // the width easing to fit what's in it
         val now = SystemClock.uptimeMillis()
         if (drawnWidth == 0f) drawnWidth = goalWidth
@@ -179,20 +209,34 @@ class PillView(ctx: Context, private val tall: Float = 40f) : FrameLayout(ctx) {
         }
         path.close()
         paint.color = FILL
-        paint.alpha = (255 * (1 - bugness)).toInt()
+        paint.alpha = (255 * (1 - bugness) * (1 - clodsire)).toInt()
         canvas.drawPath(path, paint)
         paint.alpha = 255
         if (bugness > 0f) {
             val b = (s * 1.05f).toInt()
             bug.setBounds((playAt - b / 2).toInt(), (cy - b / 2).toInt(), (playAt + b / 2).toInt(), (cy + b / 2).toInt())
+            bug.setTint(FILL)
             bug.alpha = (255 * bugness).toInt()
             bug.draw(canvas)
+        }
+        if (clodsire > 0f) {
+            val mw = s * 1.5f
+            val mh = mw * mark.intrinsicHeight / mark.intrinsicWidth
+            mark.setBounds((playAt - mw / 2).toInt(), (cy - mh / 2).toInt(), (playAt + mw / 2).toInt(), (cy + mh / 2).toInt())
+            mark.setTint(FILL)
+            mark.alpha = (255 * clodsire).toInt()
+            mark.draw(canvas)
+            postInvalidateOnAnimation()
         }
 
         // the website's code, or a word; three breathing dots while the code's on its way
         val baseline = cy - (text.ascent() + text.descent()) / 2
         val slide = (1 - reveal) * dp(10f)
-        if (code.isNotEmpty()) {
+        if (flashing) {
+            text.color = INK
+            canvas.drawText(flash, codeLeft - slide, baseline, text)
+            postInvalidateOnAnimation()
+        } else if (code.isNotEmpty()) {
             text.color = INK
             text.alpha = (255 * reveal).toInt()
             canvas.drawText(code, codeLeft - slide, baseline, text)
@@ -262,16 +306,16 @@ class PillView(ctx: Context, private val tall: Float = 40f) : FrameLayout(ctx) {
         override fun onDown(e: MotionEvent) = true
         override fun onSingleTapUp(e: MotionEvent): Boolean {
             when (hit(e)) {
-                "play" -> actions?.play()
-                "code" -> actions?.code()
+                "play" -> { performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY); actions?.play() }
+                "code" -> { performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY); actions?.code() }
             }
             return true
         }
         override fun onLongPress(e: MotionEvent) {
             if (dragging) return
             when (hit(e)) {
-                "play" -> actions?.debug()
-                "code" -> actions?.newCode()
+                "play" -> { performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS); actions?.debug() }
+                "code" -> { performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS); actions?.newCode() }
             }
         }
     })

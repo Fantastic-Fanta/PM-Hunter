@@ -163,8 +163,18 @@ class HuntService : AccessibilityService(), Phone {
                 else -> "${appName(pkg)} is in front of Roblox"
             } + ")")
         }
-        // the notification shade, a keyboard or this app's own button don't count
-        if (pkg == packageName || pkg == "com.android.systemui" || pkg in keyboards()) return
+        // the app's own screen: no pill over it (it's for setting up)
+        if (pkg == packageName) {
+            // (its toasts and the pill itself come from here too: only the screen counts)
+            if (event.className?.toString()?.endsWith("MainActivity") == true && !appShown) {
+                appShown = true
+                updateButton()
+            }
+            return
+        }
+        // the notification shade or a keyboard don't count
+        if (pkg == "com.android.systemui" || pkg in keyboards()) return
+        appShown = false
         robloxShown = pkg == ROBLOX
         updateButton()
     }
@@ -230,8 +240,10 @@ class HuntService : AccessibilityService(), Phone {
         runCatching { getSystemService(NotificationManager::class.java).notify(2, n) }
     }
 
-    /** The button shows while Roblox is on screen, or a hunt is on. */
-    private fun updateButton() = main { if (robloxShown || hunter != null) showButton() else hideButton() }
+    /** The pill shows while Roblox is on screen, or a hunt is on; not over the app itself. */
+    private fun updateButton() = main { if ((robloxShown || hunter != null) && !appShown) showButton() else hideButton() }
+
+    @Volatile private var appShown = false  // the app's own screen is up
 
     @Volatile private var starting = false
 
@@ -286,8 +298,11 @@ class HuntService : AccessibilityService(), Phone {
             override fun play() = onButton()
             override fun debug() = onDebug()
             override fun code() {
-                if (pill.code.isNotEmpty()) startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://poopihunt.xyz/app"))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                // copied, to type on poopihunt.xyz/app on the computer
+                if (pill.code.isEmpty()) return
+                getSystemService(android.content.ClipboardManager::class.java)
+                    .setPrimaryClip(android.content.ClipData.newPlainText("Poopihunt code", pill.code))
+                pill.flash("Copied")
             }
             override fun newCode() {
                 val h = hunter?.takeIf { it.linked() } ?: return
@@ -387,6 +402,7 @@ class HuntService : AccessibilityService(), Phone {
             else -> PillView.State.OFF
         }
         b.testing = debugNext || h?.testing() == true
+        b.found = h?.found() == true
         val remote = h?.takeIf { it.linked() }
         b.code = remote?.code() ?: ""
         b.words = when {

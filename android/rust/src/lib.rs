@@ -298,6 +298,12 @@ impl Hunter {
         self.control.testing()
     }
 
+    /// A wanted one on screen, held for you (the pill turns white).
+    pub fn found(&self) -> bool {
+        let w = self.control.web.lock().unwrap();
+        w.phase == "battle" && w.wanted
+    }
+
     /// The layout fitted again at the next encounter, and drawn (Pictures/Hunt).
     pub fn calibrate_next(&self) {
         self.control.calibrate_next();
