@@ -354,6 +354,17 @@ pub struct Hunt {
 pub fn start(dev: Arc<dyn Device>, sink: Arc<dyn Sink>, debug: Arc<DebugChannel>, cfg: Config, store: Store,
              opts: Options) -> (Arc<Control>, Hunt) {
     let traits = dev.traits();
+    // the update log: the build this ran as last time here (build.txt), and a word to the
+    // debug channel when it's another one (an update), or the first time (a new install)
+    let last = store.path("build.txt");
+    let before = std::fs::read_to_string(&last).unwrap_or_default().trim().to_string();
+    if !opts.build.is_empty() && before != opts.build {
+        let msg = if before.is_empty() { format!("installed: {}", opts.build) }
+                  else { format!("updated: {before} → {}", opts.build) };
+        let d = debug.clone();
+        std::thread::spawn(move || d.post(&msg, None));
+        let _ = std::fs::write(&last, &opts.build);
+    }
     let out = Arc::new(Out::new(sink, debug));
     let o = out.clone();
     let discord = Webhook::new(&cfg.webhook, false, Arc::new(move |e: &str| o.print(e)));
@@ -1069,7 +1080,6 @@ impl Hunt {
         let mut last_battle: Option<Enc> = None; // the battle on screen, once read
         let (mut last_enc, mut last_status, mut quiet_said) = (now(), now(), false);
         let (mut save_due, mut last_save, mut last_check) = (false, 0.0, 0.0);
-        let (mut last_pp, mut pp_tries) = (0.0, 0);
         let (mut first_look, mut last_seen) = (true, now());
         let key = self.traits.toggle_key;
         // A new install (no debug run gone right, no encounter ever): the first hunt's first
@@ -1176,24 +1186,6 @@ impl Hunt {
                 };
                 if phase_changed {
                     c.publish();
-                }
-                if let (false, Some(h), false) = (self.pp_for.is_empty(), hint, watch) {
-                    if now() - last_pp > 30.0 {
-                        last_pp = now();
-                        pp_tries += 1;
-                        let item = c.cfg.str("pp_item");
-                        if self.restore_pp(&Layout::new(h, &self.cal.clone()))? {
-                            self.say(&format!("  (PP restored: a {item} on {})", self.pp_for));
-                            self.pp_for.clear();
-                            pp_tries = 0;
-                            save_due = save_due || c.cfg.boolean("save_after_catch", true);
-                        } else if pp_tries >= 3 {
-                            self.say(&format!("  (couldn't use a {item} 3 times: do it in Roblox; until then the catches just throw balls)"));
-                            last_pp = now() + 30.0 * 60.0; // and again in half an hour
-                            pp_tries = 0;
-                        }
-                        continue;
-                    }
                 }
                 if save_due && !watch && now() - last_save > SAVE_EVERY {
                     self.save_wait = 0;

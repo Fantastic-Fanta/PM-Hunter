@@ -392,12 +392,14 @@ impl Hunt {
             while now() < still {
                 self.nap(0.3)?;
                 let f = self.grab();
-                if !self.screen_texts(&f).iter().any(|t| t.is("back")) {
+                let texts = self.screen_texts(&f);
+                let listed = texts.iter().any(|t| t.text.to_lowercase() == mv.to_lowercase()
+                                              && (t.x - hit.x).abs() < 30.0 * v && (t.y - hit.y).abs() < 15.0 * v);
+                if !listed || !texts.iter().any(|t| t.is("back")) {
                     return Ok("used");
                 }
             }
             self.trace(&format!("fight: {mv} didn't take (no PP left?), back"));
-            self.move_pp = Some(0);
             self.back_to_menu(lay, 6.0)?;
             return Ok("no pp");
         }
@@ -444,13 +446,13 @@ impl Hunt {
         Ok(("timeout", last, lay, msgs))
     }
 
-    /// A move is out of PP. The game takes the PP item only outside battles, so
-    /// it's used between encounters (restore_pp); balls until then.
+    /// A move is out of PP: balls for the rest of this battle. No PP item while hunting
+    /// (the game's glitched with it: a Max Elixir went on a lead with every move full);
+    /// the next battle reads the moves' PP again.
     pub(crate) fn need_pp(&mut self, lead: &str, mv: &str) {
         if self.pp_for.is_empty() {
             self.pp_for = if lead.is_empty() { self.c.cfg.str("sleep_with") } else { lead.to_string() };
-            self.print(&format!("  {mv} is out of PP: a {} on {} after this battle (the game takes it only outside battles)",
-                                self.c.cfg.str("pp_item"), self.pp_for));
+            self.print(&format!("  {mv} is out of PP: balls for the rest of this battle"));
         }
     }
 
@@ -462,6 +464,7 @@ impl Hunt {
     /// catching(), stopping when the battle ends under it.
     pub(crate) fn catch(&mut self, enc: &Enc, f: &Frame, lay: &Layout, first_ball: bool) -> R<(String, String)> {
         let mut progress = (0usize, 0u32, String::new());
+        self.pp_for.clear(); // out of PP was for the last battle: this one reads the moves again
         match self.catching(enc, f, lay, first_ball, &mut progress) {
             Err(Halt::BattleOver) => {
                 if progress.2 == "Park Ball" {
@@ -771,7 +774,7 @@ impl Hunt {
                 "ball" => format!("Throwing a {name}"),
                 "move" => format!("Using {name}"),
                 "heal" => format!("Using a {}", cfg.str("heal_item")),
-                "pp" => format!("A {} after this battle", cfg.str("pp_item")),
+                "pp" => "No PP item: out of PP, balls".into(),
                 "run" => "Running".into(),
                 _ => String::new(),
             };
@@ -822,10 +825,10 @@ impl Hunt {
                     self.use_item(&lay, "Recovers", &cfg.str("heal_item"), Some(&lead), None, true)?.is_some()
                 }
                 "pp" => {
-                    // the game takes it only outside battles
+                    // no PP item (the game's glitched with it): balls for the rest of this battle
                     let lead = self.c.web.lock().unwrap().lead.name.clone();
                     self.need_pp(&lead, "a move");
-                    error = format!("The game takes a {} only outside battles: it's used after this one", cfg.str("pp_item"));
+                    error = format!("No {} while hunting: balls for the rest of this battle", cfg.str("pp_item"));
                     false // no turn taken: the page shows that, and the battle goes on
                 }
                 _ => {

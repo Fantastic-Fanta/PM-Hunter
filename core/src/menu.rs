@@ -15,7 +15,6 @@ use regex::Regex;
 use serde_json::{json, Map, Value};
 use std::sync::LazyLock;
 
-static RESTORED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\bpp\b.*(restored|recovered)|restored").unwrap());
 static AFTER_ITEM: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)restored|recovered|effect|healed|was used|can't be used").unwrap());
 
@@ -286,19 +285,6 @@ impl Hunt {
         Ok(false)
     }
 
-    /// MENU -> Bag -> Recovers -> the PP item -> Use -> the Pokemon, between
-    /// encounters, then the bag and the menu closed again. lay: the last
-    /// battle's, for where the bag's parts are. True once used.
-    pub(crate) fn restore_pp(&mut self, lay: &Layout) -> R<bool> {
-        if !self.open_bag("pp")? {
-            return Ok(false);
-        }
-        let (item, who) = (self.c.cfg.str("pp_item"), self.pp_for.clone());
-        let used = self.use_item(lay, "Recovers", &item, Some(&who), None, false)?;
-        self.close_after_item()?;
-        Ok(used.is_some())
-    }
-
     /// The bag's open: whether tab's items are favorites (at its top, a yellow
     /// tag), without changing any. False too for one not in sight.
     fn favorites_in_bag(&mut self, lay: &Layout, tab: &str, items: &[String]) -> R<Vec<(String, bool)>> {
@@ -391,31 +377,6 @@ impl Hunt {
             self.nap(self.traits.poll)?;
         }
         Ok(false)
-    }
-
-    /// After an item outside battle: its message clicked away, the bag's Close,
-    /// the MENU's tab, until neither is up.
-    pub(crate) fn close_after_item(&mut self) -> R<()> {
-        let end = now() + 10.0;
-        while now() < end {
-            self.nap(self.traits.poll)?;
-            let f = self.grab();
-            let texts = self.screen_texts(&f);
-            let msg = texts.iter().find(|t| RESTORED.is_match(&t.text)).map(|t| t.pt());
-            let close = texts.iter().find(|t| t.is("close")).map(|t| t.pt());
-            if let Some(m) = msg {
-                self.click(m)?;
-            } else if let Some(c) = close {
-                self.click(c)?;
-            } else if menu_open(&texts) {
-                if let Some(tab) = find_menu_tab(&f, &texts) {
-                    self.click(tab)?;
-                }
-            } else {
-                return Ok(());
-            }
-        }
-        Ok(())
     }
 
     /// Closes a save message or menu panel left open; no encounters come while
