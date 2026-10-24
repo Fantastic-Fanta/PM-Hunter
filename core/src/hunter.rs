@@ -66,6 +66,8 @@ pub struct Options {
     pub key: String,
     /// Each run-from encounter's time, traced (HUNT_TIMES).
     pub times: bool,
+    /// Encounters so far: a hunt carried on from before an update.
+    pub count: u32,
 }
 
 /// What the website shows of the hunt.
@@ -96,6 +98,7 @@ pub struct Control {
     stopped: AtomicBool,
     remote: AtomicBool,
     busy: AtomicBool,
+    between: AtomicBool,
     debug_run: AtomicBool,
     fit_next: AtomicBool,
     want_shot: AtomicBool,
@@ -149,6 +152,13 @@ impl Control {
         if let Some(link) = self.link.lock().unwrap().take() {
             link.stop();
         }
+    }
+
+    /// The hunt ends at its next quiet moment: no battle on screen, nothing owed
+    /// (a save after a catch). For an update, to carry on in the new build.
+    pub fn stop_between(&self) {
+        self.between.store(true, Relaxed);
+        self.wake.notify_all();
     }
 
     /// The window's Debug mode: a debug run on the next encounter (with the
@@ -373,13 +383,14 @@ pub fn start(dev: Arc<dyn Device>, sink: Arc<dyn Sink>, debug: Arc<DebugChannel>
         stopped: AtomicBool::new(false),
         remote: AtomicBool::new(false),
         busy: AtomicBool::new(false),
+        between: AtomicBool::new(false),
         debug_run: AtomicBool::new(false),
         fit_next: AtomicBool::new(false),
         want_shot: AtomicBool::new(false),
         test_catch: AtomicU32::new(opts.practice),
         commands: Mutex::new(VecDeque::new()),
         wake: Condvar::new(),
-        web: Mutex::new(WebState { phase: "waiting".into(), ..Default::default() }),
+        web: Mutex::new(WebState { phase: "waiting".into(), encounters: opts.count, ..Default::default() }),
         link: Mutex::new(None),
         discord,
         dev: dev.clone(),
@@ -1186,6 +1197,9 @@ impl Hunt {
                 };
                 if phase_changed {
                     c.publish();
+                }
+                if c.between.load(Relaxed) && !c.remote() && !save_due {
+                    return Err(Halt::Stopped);
                 }
                 if save_due && !watch && now() - last_save > SAVE_EVERY {
                     self.save_wait = 0;

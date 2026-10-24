@@ -105,6 +105,7 @@ pub struct Launch<'a> {
     pub calibrate: bool,
     pub reports: bool,
     pub config: &'a Path,
+    pub count: u32, // encounters so far (carried on from before an update)
 }
 
 /// A hunt on a thread of its own; done is called once it's over.
@@ -124,6 +125,7 @@ pub fn launch(l: Launch, sink: Arc<dyn Sink>, done: impl FnOnce() + Send + 'stat
         build: build().1.clone(),
         key,
         times: env::var_os("HUNT_TIMES").is_some(),
+        count: l.count,
     };
     debug.loud.store(opts.debug, std::sync::atomic::Ordering::Relaxed);
     let (control, hunt) = hunt_core::start(desktop(), sink, debug, cfg, store, opts);
@@ -192,7 +194,7 @@ pub fn terminal(args: &[String]) -> i32 {
     let practice = value("--practice").and_then(|v| v.parse().ok()).unwrap_or(0);
     let (tx, rx) = std::sync::mpsc::channel();
     let l = Launch { mode, paused: has("--paused"), window: false, practice, calibrate: has("--calibrate"), reports: true,
-                     config: &config };
+                     config: &config, count: 0 };
     match launch(l, console, move || {
         let _ = tx.send(());
     }) {

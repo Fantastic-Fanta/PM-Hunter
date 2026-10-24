@@ -50,7 +50,9 @@ const BIG: f32 = 160.0; // its size, at first
 const INTRO_MOVE: f32 = 1.55; // s: when it sets off (it's come in and breathed by then)
 const INTRO_LAND: f32 = 2.35; // s: when it's the pill's end, play in it
 const INTRO_END: f32 = 2.65; // s: the landing's ripple gone, the window back over the pill
+const HANDOVER: u64 = 90; // s: an update's new Hunt, as long as the old one waits for it
 // the closing: the pill shrinks rightwards into a ball, and the ball goes
+const SETTLE: f32 = 0.95; // s: an update's bar going back into play, the pill coming up
 const FOLD: f32 = 0.3; // s, shrinking into the ball
 const VANISH: f32 = 0.25; // s, the ball going
 
@@ -121,15 +123,23 @@ struct Paths {
     config: PathBuf,
     settings: PathBuf,
     log: PathBuf,
+    updated: PathBuf, // left by a Hunt installing an update, there till the new one's up
 }
 
 impl Paths {
+    /// An update's own start: the old Hunt's still there, handing over (or was, a moment ago).
+    fn updating(&self) -> bool {
+        fs::metadata(&self.updated).and_then(|m| m.modified())
+            .is_ok_and(|t| t.elapsed().is_ok_and(|e| e < Duration::from_secs(HANDOVER)))
+    }
+
     fn new() -> Paths {
         let data = engine::data_dir();
         Paths {
             config: data.join("config.json"),
             settings: data.join("window.json"),
             log: data.join("hunt.log"),
+            updated: data.join("updated"),
             data,
         }
     }
@@ -195,7 +205,13 @@ enum Msg {
 /// The closing: the pill shrinking into a ball at its right end, the ball going.
 struct Closing {
     started: Instant,
-    install: bool, // the update's installer runs once it's done
+}
+
+/// The new Hunt, after an update: it comes on as the old one is, Installing,
+/// over it (the old one goes once it's seen the new one's up), then settles.
+struct TakeOver {
+    frames: u32,
+    seen: Option<Instant>, // told the old one it's up
 }
 
 /// The opening's window: started once it's over the whole screen.
@@ -271,7 +287,6 @@ struct Hunt {
     note: String,
     installer: Option<PathBuf>,
     install_when_stopped: bool,
-    install_when_paused: bool,
     downloading: bool, // an update's on its way down
     progress: Option<f32>, // the update, as the pill shows it (all of it a progress bar): 1 is installing
     was_hunting: bool, // the last state's: a stop is when it goes, and a look for a newer build
@@ -282,7 +297,15 @@ struct Hunt {
     was_found: String,
     born: Option<Instant>, // the pill's own opening (stretching out from play): its first frame
     intro: Option<Intro>,   // the big Clodsire, while it's on
-    closing: Option<Closing>, // ✕ (or an update): the opening the other way
+    closing: Option<Closing>, // ✕: the opening the other way
+    handing_over: Option<Instant>, // an update's installer started: this one goes once the new one's up
+    taking_over: Option<TakeOver>, // the new one, the other side of that
+    overlay_on: bool, // the update's bar over the pill, last frame
+    bar_done: f32, // how far along it the bar was
+    settling: Option<(Instant, f32, f32)>, // the bar going back into play: since, how far it was, how much was up
+    carried: Option<Value>, // the hunt as it was, stopped for an update: the new Hunt carries on with it
+    count_from: u32, // the next hunter's first count (an update's, carried on)
+    checked_at: u32, // encounters at the last look for an update
     closed: bool,           // the closing's done: the window may go
     lifted: Option<Instant>, // being dragged, since
     moved_at: Option<Instant>, // its place last changed
@@ -318,6 +341,14 @@ impl Hunt {
         cc.egui_ctx.set_visuals(visuals);
 
         let (tx, rx) = channel();
+        // an update's own start: no opening, the pill just there as the old one is
+        let updated = paths.updating();
+        if !updated {
+            let _ = fs::remove_file(&paths.updated);
+        }
+        let carried = updated.then(|| fs::read_to_string(&paths.updated).ok())
+            .flatten().and_then(|t| serde_json::from_str::<Value>(&t).ok());
+        remove_old_exe();
         let mut hunt = Hunt {
             reports: settings.get("reports").and_then(Value::as_bool).unwrap_or(true),
             settings,
@@ -343,22 +374,29 @@ impl Hunt {
             note: String::new(),
             installer: None,
             install_when_stopped: false,
-            install_when_paused: false,
             downloading: false,
-            progress: None,
+            progress: updated.then_some(1.0),
             was_hunting: false,
             pos,
             pos_saved: pos,
             pos_changed: None,
             was_found: String::new(),
-            born: None,
+            born: updated.then(|| Instant::now().checked_sub(Duration::from_secs(5))).flatten(),
             closing: None,
+            handing_over: None,
+            taking_over: updated.then_some(TakeOver { frames: 0, seen: None }),
+            overlay_on: false,
+            bar_done: 0.0,
+            settling: None,
+            carried,
+            count_from: 0,
+            checked_at: 0,
             closed: false,
             lifted: None,
             moved_at: None,
             // (only where it's see-through: on Direct3D the window over the screen would be black)
             intro: ((!env::args().any(|a| a == "--smoke") || env::args().any(|a| a == "--intro"))
-                    && env::var_os("HUNT_NO_INTRO").is_none() && env::var_os("HUNT_RENDERER").is_none())
+                    && !updated && env::var_os("HUNT_NO_INTRO").is_none() && env::var_os("HUNT_RENDERER").is_none())
                 .then_some(Intro { started: None, handover: None, origin: Pos2::ZERO, frames: 0 }),
             smoke: env::args().any(|a| a == "--smoke").then(Smoke::new),
             start_now: !env::args().any(|a| a == "--smoke"),
@@ -396,6 +434,7 @@ impl Hunt {
         let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
         let launch = engine::Launch {
             mode, paused, window: true, practice: 0, calibrate: false, reports: self.reports, config: &self.paths.config,
+            count: std::mem::take(&mut self.count_from),
         };
         let control = match engine::launch(launch, sink, move || {
             let _ = tx.send(Msg::Ended(id));
@@ -483,12 +522,33 @@ impl Hunt {
         if std::mem::replace(&mut self.was_hunting, hunting) && !hunting {
             self.check_update(); // a hunt's stopped (you, a find, Ctrl+Shift+H): a newer build goes on now
         }
-        if !hunting && self.install_when_paused && self.was_found.is_empty() {
-            // (not with a find held on screen for you: Hunt stays, keeping Roblox awake)
-            self.install_when_paused = false;
+        // a look for a newer build every 5 encounters (mac.json / windows.json: a few bytes)
+        let count = self.state.get("count").and_then(Value::as_u64).unwrap_or(0) as u32;
+        if count >= self.checked_at + 5 {
+            self.checked_at = count;
+            self.check_update();
+        }
+        if self.install_when_stopped && hunting {
+            self.carry(); // (as it is when it stops at its quiet moment)
+        }
+        self.install_when_quiet();
+    }
+
+    /// A downloaded update with a hunter on: paused (not with a find held on screen for
+    /// you: Hunt stays, keeping Roblox awake), it stops now; hunting, it stops at its next
+    /// quiet moment. ended() installs once it's gone, and the new Hunt carries on.
+    fn install_when_quiet(&mut self) {
+        if !self.install_when_stopped || self.installer.is_none() {
+            return;
+        }
+        if self.hunting() {
+            if let Some(p) = &self.proc {
+                p.control.stop_between();
+            }
+        } else if self.was_found.is_empty() {
+            self.carry();
             self.progress = Some(1.0);
-            self.install_when_stopped = true;
-            self.stop(); // ended() installs, once the hunter is gone
+            self.stop();
         }
     }
 
@@ -506,6 +566,7 @@ impl Hunt {
         self.test = false;
         self.was_found.clear();
         if self.install_when_stopped {
+            self.progress = Some(1.0);
             self.install();
         } else if let Some((mode, paused)) = self.restart_to.take() {
             self.start(&mode, paused);
@@ -692,29 +753,90 @@ impl Hunt {
         });
     }
 
-    /// The installer replaces Hunt's folder and starts the new Hunt; this one gets out of its way
-    /// (with its closing first).
+    /// The installer replaces Hunt's folder and starts the new Hunt, which comes on over
+    /// this one as it is (Installing); this one goes once it's there, so it never looks closed.
     fn install(&mut self) {
-        let ctx = self.ctx.clone();
-        self.close_with(&ctx, true);
+        self.hand_over();
+        self.run_installer();
+    }
+
+    fn hand_over(&mut self) {
+        let was = self.carried.clone().unwrap_or(Value::Null);
+        let _ = fs::write(&self.paths.updated, was.to_string());
+        self.handing_over = Some(Instant::now());
+    }
+
+    /// The hunt as it is, for the new Hunt to carry on with (taken just before it stops).
+    fn carry(&mut self) {
+        let count = self.state.get("count").and_then(Value::as_u64).unwrap_or(0);
+        self.carried = Some(json!({"mode": self.mode, "hunting": self.hunting(), "count": count, "test": self.test}));
+    }
+
+    /// The old Hunt: gone once the new one's up (it takes the file away). One that never
+    /// comes (the update didn't install): this one stays.
+    fn handing_over(&mut self, ctx: &egui::Context) {
+        let Some(since) = self.handing_over else { return };
+        if !self.paths.updated.exists() {
+            self.closed = true;
+            ctx.send_viewport_cmd(ViewportCommand::Close);
+        } else if since.elapsed() > Duration::from_secs(HANDOVER) {
+            let _ = fs::remove_file(&self.paths.updated);
+            #[cfg(windows)]
+            if let Ok(me) = env::current_exe() {
+                if !me.with_file_name("Hunt.exe").exists() {
+                    let _ = fs::rename(me.with_file_name("Hunt.old.exe"), me.with_file_name("Hunt.exe"));
+                }
+            }
+            self.say("the update didn't install: the new Hunt never came");
+            self.handing_over = None;
+            self.installer = None;
+            self.install_when_stopped = false;
+            self.progress = None;
+            self.start_now = true; // the hunt as it was (carried)
+        } else {
+            ctx.request_repaint_after(Duration::from_millis(50));
+        }
+    }
+
+    /// The new Hunt: up (a few frames drawn), it tells the old one, which goes; then
+    /// Installing gives way to the pill.
+    fn taking_over(&mut self, ctx: &egui::Context) {
+        let Some(take) = self.taking_over.as_mut() else { return };
+        take.frames += 1;
+        if take.frames == 4 {
+            let _ = fs::remove_file(&self.paths.updated);
+            take.seen = Some(Instant::now());
+        }
+        if take.seen.is_some_and(|t| t.elapsed() > Duration::from_millis(500)) {
+            self.taking_over = None;
+            self.progress = None;
+            remove_old_exe();
+        }
+        ctx.request_repaint();
     }
 
     fn run_installer(&mut self) {
         #[cfg(windows)]
         if let Some(setup) = &self.installer {
             use std::os::windows::process::CommandExt;
+            // a running Hunt.exe can't be written over, but it can be moved: out of the installer's way
+            if let Ok(me) = env::current_exe() {
+                let _ = fs::remove_file(me.with_file_name("Hunt.old.exe"));
+                let _ = fs::rename(&me, me.with_file_name("Hunt.old.exe"));
+            }
             let _ = Command::new(setup)
                 .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"])
                 .creation_flags(0x0000_0008) // DETACHED_PROCESS
                 .spawn();
         }
-        // a Mac: the new Hunt.app (a zip) put in this one's place once this one's gone, and opened
+        // a Mac: the new Hunt.app (a zip) put in this one's place (this one runs on from what it's
+        // read) and opened, as a Hunt of its own
         #[cfg(target_os = "macos")]
         if let (Some(zip), Some(app)) = (&self.installer, engine::app_bundle()) {
             let script = format!(
-                "while kill -0 {pid} 2>/dev/null; do sleep 0.2; done; d=$(mktemp -d) && ditto -x -k '{zip}' \"$d\" && \
-                 [ -d \"$d/Hunt.app\" ] && rm -rf '{app}' && mv \"$d/Hunt.app\" '{app}'; rm -rf \"$d\" '{zip}'; open '{app}'",
-                pid = std::process::id(), zip = zip.display(), app = app.display());
+                "d=$(mktemp -d) && ditto -x -k '{zip}' \"$d\" && [ -d \"$d/Hunt.app\" ] && rm -rf '{app}' && \
+                 mv \"$d/Hunt.app\" '{app}' && open -n '{app}'; rm -rf \"$d\" '{zip}'",
+                zip = zip.display(), app = app.display());
             let _ = Command::new("/bin/sh").args(["-c", &script]).stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
         }
@@ -979,34 +1101,63 @@ impl Hunt {
             ctx.memory_mut(|m| m.surrender_focus(Id::new("hook")));
         }
         if env::var_os("HUNT_PREVIEW_UPDATE").is_some() {
-            // a look at the update: the pill as it is for 3 s, down in 4 s, installing, closed
-            self.progress = (t > 3.0).then(|| ((t - 3.5) / 4.0).clamp(0.0, 1.0));
+            // a look at the update: the pill as it is for 3 s, down in 4 s, installing, a new Hunt
+            if self.handing_over.is_none() {
+                self.progress = (t > 3.0).then(|| ((t - 3.5) / 4.0).clamp(0.0, 1.0));
+            }
             ctx.request_repaint(); // (a real one's redrawn as it comes down)
-            if t > 9.5 && self.closing.is_none() {
-                self.close_with(&ctx, false);
+            if t > 9.5 && self.handing_over.is_none() {
+                self.carry();
+                self.hand_over();
+                let me = env::current_exe().unwrap_or_default();
+                let _ = Command::new(me).args(env::args().skip(1)).env_remove("HUNT_PREVIEW_UPDATE").spawn();
             }
         }
 
         // an update on its way: the pill goes darker as what's in it fades, and play's white
         // circle stretches rightwards along it as the update comes down, "Installing" once
-        // it's all the way; then Hunt closes, and the installer opens the new one
-        let updating = ctx.animate_bool_with_time(Id::new("updating"), self.progress.is_some() && !self.hunting(), 0.7);
-        if updating > 0.0 {
+        // it's all the way; then Hunt closes, and the installer opens the new one. The new
+        // one (or a download that didn't come) the other way: the words go, the bar slides
+        // back into play's circle, and the pill comes up through the black, play's triangle with it
+        let on = (self.progress.is_some() && !self.hunting()) || self.taking_over.is_some();
+        let updating = ctx.animate_bool_with_time(Id::new("updating"), on, 0.7);
+        let done_now = ctx.animate_value_with_time(Id::new("progress"), self.progress.unwrap_or(1.0), 0.3);
+        if std::mem::replace(&mut self.overlay_on, on) && !on {
+            self.settling = Some((Instant::now(), self.bar_done, updating));
+        }
+        if on {
+            self.settling = None;
+            self.bar_done = done_now;
+        }
+        let settle = self.settling.map(|(t0, d0, u0)| (t0.elapsed().as_secs_f32(), d0, u0)).filter(|s| s.0 < SETTLE);
+        if settle.is_none() {
+            self.settling = None;
+        }
+        if (on && updating > 0.0) || settle.is_some() {
+            let in_out = |x: f32| {
+                let x = x.clamp(0.0, 1.0);
+                if x < 0.5 { 4.0 * x * x * x } else { 1.0 - (-2.0 * x + 2.0).powi(3) / 2.0 }
+            };
+            let (dark, words, done, said) = match settle {
+                Some((t, d0, u0)) => {
+                    let up = 1.0 - ease((t - 0.55) / 0.4); // the black (and the bar, play's circle by then) lifting
+                    (ease(u0 / 0.55) * up, ease((u0 - 0.4) / 0.6) * (1.0 - ease(t / 0.15)),
+                     d0 * (1.0 - in_out((t - 0.08) / 0.45)), d0)
+                }
+                None => (ease(updating / 0.55), ease((updating - 0.4) / 0.6), done_now, done_now),
+            };
             ui.disable(); // (what's under it can't be clicked while it comes)
             let layer = egui::LayerId::new(egui::Order::Foreground, Id::new("update"));
             ctx.set_transform_layer(layer, egui::emath::TSTransform::new(MARGIN + middle * (1.0 - s), s));
             let p = ctx.layer_painter(layer).with_clip_rect(shape.shrink(1.0));
-            let dark = ease(updating / 0.55); // what's in the pill fades into its black first
-            let words = ease((updating - 0.4) / 0.6); // then the words come up
             p.rect_filled(shape.shrink(1.0), r - 1.0, Color32::BLACK.gamma_multiply(dark));
             // play's circle, where it is, stretched by how much is down
-            let done = ctx.animate_value_with_time(Id::new("progress"), self.progress.unwrap_or(1.0), 0.3);
             let track = Rect::from_min_max(pos2(shape.min.x + INSET, H / 2.0 - CONTROL / 2.0),
                                            pos2(shape.max.x - INSET, H / 2.0 + CONTROL / 2.0));
             let bar = track.with_max_x(track.min.x + CONTROL + (track.width() - CONTROL).max(0.0) * done);
             p.rect_filled(track, CONTROL / 2.0, c.boxed.gamma_multiply(0.5 * words)); // the way it goes
             p.rect_filled(bar, CONTROL / 2.0, c.ink.gamma_multiply(dark));
-            let label = if done < 0.995 { format!("Updating  {:.0}%", done * 100.0) } else { "Installing".into() };
+            let label = if said < 0.995 { format!("Updating  {:.0}%", said * 100.0) } else { "Installing".into() };
             let font = FontId::proportional(TEXT);
             let at = track.center();
             // the words white on the black, black on the white
@@ -1014,7 +1165,7 @@ impl Hunt {
                                                                c.ink.gamma_multiply(words));
             p.with_clip_rect(bar).text(at, Align2::CENTER_CENTER, &label, font, Color32::BLACK.gamma_multiply(words));
             ctx.request_repaint();
-            if updating >= 1.0 {
+            if dark >= 1.0 {
                 return; // all under it now
             }
         }
@@ -1156,29 +1307,25 @@ impl Hunt {
 
     fn quit(&mut self, ctx: &egui::Context) {
         self.stop();
-        self.close_with(ctx, false);
+        self.close_with(ctx);
     }
 
-    /// The closing, then the window goes (and the update's installer starts, with
-    /// install). Straight away where there's no see-through window to fly in.
-    fn close_with(&mut self, ctx: &egui::Context, install: bool) {
+    /// The closing, then the window goes. Straight away where there's no see-through window to fly in.
+    fn close_with(&mut self, ctx: &egui::Context) {
         if self.closing.is_some() || self.closed {
             return;
         }
         let animate = self.intro.is_none() && (self.smoke.is_none() || env::args().any(|a| a == "--intro"));
         if animate {
-            self.closing = Some(Closing { started: Instant::now(), install });
+            self.closing = Some(Closing { started: Instant::now() });
             ctx.request_repaint();
         } else {
-            self.finish_close(ctx, install);
+            self.finish_close(ctx);
         }
     }
 
-    fn finish_close(&mut self, ctx: &egui::Context, install: bool) {
+    fn finish_close(&mut self, ctx: &egui::Context) {
         self.closed = true;
-        if install {
-            self.run_installer();
-        }
         ctx.send_viewport_cmd(ViewportCommand::Close);
     }
 
@@ -1187,8 +1334,7 @@ impl Hunt {
         let Some(closing) = self.closing.as_ref() else { return };
         ctx.request_repaint();
         if closing.started.elapsed().as_secs_f32() >= FOLD + VANISH {
-            let install = closing.install;
-            self.finish_close(ctx, install);
+            self.finish_close(ctx);
         }
     }
 }
@@ -1219,13 +1365,9 @@ impl eframe::App for Hunt {
                 Msg::Downloaded(path) => {
                     self.installer = Some(path);
                     self.downloading = false;
-                    if self.hunting() {
-                        self.progress = None;
-                        self.install_when_paused = true; // once it stops (you, a find, Ctrl+Shift+H)
-                    } else if self.proc.is_some() {
-                        self.progress = Some(1.0);
+                    if self.proc.is_some() {
                         self.install_when_stopped = true;
-                        self.stop(); // ended() installs, once the hunter is gone
+                        self.install_when_quiet();
                     } else {
                         self.progress = Some(1.0);
                         self.install();
@@ -1237,10 +1379,12 @@ impl eframe::App for Hunt {
             // (Alt+F4, the taskbar's Close): the closing first, then it goes
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
             self.stop();
-            self.close_with(ctx, false);
+            self.close_with(ctx);
         }
         // (the pill's drawing moves its layer M in; the opening draws in the window's own terms)
         ctx.set_transform_layer(egui::LayerId::background(), egui::emath::TSTransform::IDENTITY);
+        self.handing_over(ctx);
+        self.taking_over(ctx);
         if self.intro.is_some() {
             self.intro_window(ctx);
         } else if self.closing.is_some() {
@@ -1249,7 +1393,18 @@ impl eframe::App for Hunt {
             self.track_place(ctx);
         }
         if std::mem::take(&mut self.start_now) {
-            self.start(Self::hunt_mode(), !env::args().any(|a| a == "--start"));
+            match self.carried.take() {
+                // after an update: the hunt as the old Hunt left it
+                Some(was) => {
+                    let mode = was["mode"].as_str().filter(|m| ["hunt", "watch", "debug"].contains(m))
+                        .unwrap_or(Self::hunt_mode()).to_string();
+                    self.test = was["test"].as_bool().unwrap_or(false);
+                    self.count_from = was["count"].as_u64().unwrap_or(0) as u32;
+                    self.checked_at = self.count_from;
+                    self.start(&mode, !was["hunting"].as_bool().unwrap_or(false));
+                }
+                None => self.start(Self::hunt_mode(), !env::args().any(|a| a == "--start")),
+            }
         }
         if let Some(mut smoke) = self.smoke.take() {
             smoke.step(self, ctx);
@@ -1447,7 +1602,8 @@ fn main() -> eframe::Result {
         std::process::exit(engine::terminal(&args));
     }
     std::panic::set_hook(Box::new(|info| note(&format!("Hunt's window crashed: {info}"))));
-    if env::var_os("HUNT_RENDERER").is_none() && !single_instance() {
+    // (an update's new Hunt comes on while the old one's still there)
+    if env::var_os("HUNT_RENDERER").is_none() && !Paths::new().updating() && !single_instance() {
         return Ok(()); // (the Direct3D start is this same Hunt, already counted)
     }
     let mut viewport = egui::ViewportBuilder::default()
@@ -1507,6 +1663,14 @@ fn direct3d_anywhere() -> eframe::egui_wgpu::WgpuConfiguration {
     WgpuConfiguration {
         wgpu_setup: WgpuSetup::CreateNew(WgpuSetupCreateNew { native_adapter_selector: Some(pick), ..Default::default() }),
         ..Default::default()
+    }
+}
+
+/// The Hunt.exe an update moved out of the way, once it's done with.
+fn remove_old_exe() {
+    #[cfg(windows)]
+    if let Ok(me) = env::current_exe() {
+        let _ = fs::remove_file(me.with_file_name("Hunt.old.exe"));
     }
 }
 
