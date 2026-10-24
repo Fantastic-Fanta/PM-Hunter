@@ -161,6 +161,11 @@ impl Control {
         self.publish();
     }
 
+    /// The layout fitted again at the next encounter, and drawn (Pictures/Hunt on a phone).
+    pub fn calibrate_next(&self) {
+        self.fit_next.store(true, Relaxed);
+    }
+
     fn update_loud(&self) {
         self.out.debug.loud.store(self.opts.debug || self.debug_run.load(Relaxed), Relaxed);
     }
@@ -187,6 +192,11 @@ impl Control {
     /// A browser logged in with the last code.
     pub fn logged_in(&self) -> bool {
         self.link.lock().unwrap().as_ref().is_some_and(|l| l.logged_in())
+    }
+
+    /// The website, when this hunt is linked to it.
+    pub fn link(&self) -> Option<Arc<Link>> {
+        self.link.lock().unwrap().clone()
     }
 
     pub fn linked(&self) -> bool {

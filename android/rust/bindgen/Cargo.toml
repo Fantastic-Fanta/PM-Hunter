@@ -1,0 +1,13 @@
+[package]
+name = "uniffi-bindgen"
+version = "1.0.0"
+description = "Makes the Kotlin for hunt-android (run on the computer that builds the app)"
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "main.rs"
+
+[dependencies]
+uniffi = { version = "0.29", features = ["cli"] }

@@ -1,0 +1,15 @@
+[package]
+name = "hunt-android"
+version = "1.0.0"
+description = "The hunter for the Android app: hunt-core, reached from Kotlin (UniFFI)"
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "hunt"
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+hunt-core = { path = "../../core" }
+uniffi = "0.29"
+serde_json.workspace = true

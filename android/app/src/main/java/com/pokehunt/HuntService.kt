@@ -34,9 +34,12 @@ import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
-import org.json.JSONObject
-import java.io.ByteArrayOutputStream
+import com.pokehunt.core.Hunter
+import com.pokehunt.core.Phone
+import com.pokehunt.core.Rect
+import com.pokehunt.core.Shot
 import java.io.File
+import java.nio.ByteBuffer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -47,9 +50,13 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 
+fun now() = System.nanoTime() / 1e9
+
 /** The hunter's hands and eyes on the phone: an accessibility service, which
  *  may take screenshots (Android 11+) and tap for you. It also shows the
- *  pause button floating over Roblox, and notices you touching the screen. */
+ *  pause button floating over Roblox, and notices you touching the screen.
+ *  The hunter itself is Rust (libhunt.so, the same as on Mac and Windows),
+ *  which reaches the phone through Phone. */
 class HuntService : AccessibilityService(), Phone {
     companion object {
         const val ROBLOX = "com.roblox.client"
@@ -57,10 +64,8 @@ class HuntService : AccessibilityService(), Phone {
             private set
     }
 
+    /** The hunt that's on; its website code shows in the app. */
     @Volatile var hunter: Hunter? = null
-        private set
-    /** The hunt's link to the website; its code shows in the app. */
-    @Volatile var remote: Remote? = null
         private set
     private var thread: Thread? = null
     private val shots = Executors.newSingleThreadExecutor()
@@ -82,12 +87,12 @@ class HuntService : AccessibilityService(), Phone {
         updateButton()
     }
 
-    override fun typeText(text: String): Boolean {
-        val field = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return false
-        if (!field.isEditable) return false
+    override fun typeText(text: String): Boolean = runCatching {
+        val field = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return@runCatching false
+        if (!field.isEditable) return@runCatching false
         val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text) }
-        return field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-    }
+        field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+    }.getOrDefault(false)
 
     override fun keyboardHidden(hidden: Boolean) {
         softKeyboardController.showMode = if (hidden) SHOW_MODE_HIDDEN else SHOW_MODE_AUTO
@@ -133,17 +138,17 @@ class HuntService : AccessibilityService(), Phone {
 
     // ------------------------------------------------------------ start / stop
 
-    fun startHunt(cfg: Config, watch: Boolean, debug: Boolean = false) {
+    /** A hunt with config.json's text (checked already: checkConfig). */
+    fun startHunt(config: String, watch: Boolean, debug: Boolean = false) {
         endHunter()
-        val h = Hunter(this, cfg, watch, debug)
         val build = packageManager.getPackageInfo(packageName, 0).versionName ?: ""
-        // watching never taps, so there's nothing to take over
-        val r = if (watch) null else Remote(Hunt.deviceKey(this), label(), build) { fromWebsite(h, it) }
-        h.link = r
+        // watching never taps, so there's nothing to take over on the website
+        val h = Hunter(this, config, filesDir.path, watch, debug, Hunt.deviceKey(this), build, BuildConfig.DEBUG_WEBHOOK)
         hunter = h
-        remote = r
-        r?.start()
-        thread = Thread({ h.run() }, "hunter").apply { start() }
+        thread = Thread({
+            h.run()
+            if (hunter === h) main { endHunter() }  // (it stopped by itself)
+        }, "hunter").apply { start() }
         updateButton()
         Hunt.refreshTile(this)
     }
@@ -154,10 +159,7 @@ class HuntService : AccessibilityService(), Phone {
     }
 
     private fun endHunter() {
-        remote?.stop()
-        remote = null
-        hunter?.stopped = true
-        thread?.interrupt()
+        hunter?.stop()
         hunter = null
         thread = null
         updateButton()
@@ -166,20 +168,8 @@ class HuntService : AccessibilityService(), Phone {
 
     private fun main(f: () -> Unit) = android.os.Handler(mainLooper).post(f)
 
-    /** A command from the website (the poll thread). */
-    private fun fromWebsite(h: Hunter, cmd: JSONObject) {
-        when (cmd.optString("cmd")) {
-            "takeover" -> h.takeOver()
-            "resume" -> h.handBack()
-            "shot" -> h.wantShot = true
-            "login" -> websiteLogin()
-            else -> h.commands.put(cmd)
-        }
-        Hunt.refreshTile(this)
-    }
-
     /** Someone logged in with this phone's code. */
-    private fun websiteLogin() {
+    override fun websiteLogin() {
         val title = "A browser logged in to Hunt"
         val text = "It can watch and battle for this phone. Wasn't you? Open Hunt and tap Log out browsers."
         Log.print("  (website: ${title.lowercase()})")
@@ -288,13 +278,13 @@ class HuntService : AccessibilityService(), Phone {
     }
 
     private var buttonParams: WindowManager.LayoutParams? = null
-    @Volatile private var placedUnder: Box? = null
+    @Volatile private var placedUnder: Rect? = null
     @Volatile private var dragged = false  // moved by hand: it stays there
 
     override fun label() = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}, " +
         "Android ${android.os.Build.VERSION.RELEASE}"
 
-    override fun placeButton(mute: Box) {
+    override fun placeButton(mute: Rect) {
         if (dragged || mute == placedUnder) return
         placedUnder = mute
         val dp = resources.displayMetrics.density
@@ -317,7 +307,7 @@ class HuntService : AccessibilityService(), Phone {
 
     private fun refreshButton() {
         val b = button ?: return
-        val on = hunter?.running == true
+        val on = hunter?.running() == true
         b.text = if (starting) "…" else if (on) "● ON" else "OFF"
         b.setTextColor(if (on) Color.WHITE else 0xFFA0A0A0.toInt())
         b.postDelayed({ refreshButton() }, 300)
@@ -337,7 +327,7 @@ class HuntService : AccessibilityService(), Phone {
     @Volatile private var shrink = 1.0  // screen px per screenshot px
     private var failures = 0
 
-    override fun grab(): Frame {
+    override fun grab(): Shot {
         while (true) {
             val cap = CaptureService.instance
             if (cap != null) {  // screen capture instead: see screenshotsWork()
@@ -355,9 +345,13 @@ class HuntService : AccessibilityService(), Phone {
     /** Whether this Android's accessibility screenshots show anything: some
      *  emulators hand over black ones. Then MainActivity sets up screen
      *  capture (CaptureService) instead. */
-    fun screenshotsWork() = shot(5)?.let { Vision.brightness(it) > 0 } ?: false
+    fun screenshotsWork(): Boolean {
+        val lit = shot(5)?.let { com.pokehunt.core.brightness(it) } ?: 0u
+        Log.print("  (screenshots: ${lit}% bright)")
+        return lit > 0u
+    }
 
-    private fun shot(tries: Int): Frame? {
+    private fun shot(tries: Int): Shot? {
         repeat(tries) {
             // Android allows about three screenshots a second
             val wait = lastShot + 340 - System.currentTimeMillis()
@@ -387,10 +381,7 @@ class HuntService : AccessibilityService(), Phone {
             }
             failures = 0
             val bm = upright(raw)
-            val px = IntArray(bm.width * bm.height)
-            bm.getPixels(px, 0, bm.width, 0, 0, bm.width, bm.height)
-            bm.recycle()
-            return Frame(bm.width, bm.height, px)
+            return rgba(bm).also { bm.recycle() }
         }
         return null
     }
@@ -417,6 +408,13 @@ class HuntService : AccessibilityService(), Phone {
         raw.recycle()
         shrink = 1.0 / k
         return out
+    }
+
+    /** A Bitmap's pixels as the hunter takes them (ARGB_8888 lies in memory as RGBA). */
+    private fun rgba(bm: Bitmap): Shot {
+        val buf = ByteBuffer.allocate(bm.width * bm.height * 4)
+        bm.copyPixelsToBuffer(buf)
+        return Shot(bm.width, bm.height, buf.array())
     }
 
     override fun tap(x: Double, y: Double) {
@@ -466,33 +464,31 @@ class HuntService : AccessibilityService(), Phone {
         Thread.sleep(800)
     }
 
-    override fun touchedAt() = touched
+    override fun idle(): Double? = if (touched == 0.0) null else now() - touched
 
-    override fun buttonBox(): Box? {
+    override fun buttonBox(): Rect? {
         val b = button ?: return null
         if (!b.isShown) return null
         val at = IntArray(2)
         b.getLocationOnScreen(at)
         val k = shrink
-        return Box((at[0] / k).toInt(), (at[1] / k).toInt(), ((at[0] + b.width) / k).toInt(), ((at[1] + b.height) / k).toInt())
+        return Rect((at[0] / k).toInt(), (at[1] / k).toInt(), ((at[0] + b.width) / k).toInt(), ((at[1] + b.height) / k).toInt())
     }
 
-    override fun ocr(f: Frame, area: Box, zoom: Double): List<TextHit> {
-        val a = f.clip(area)
-        if (a.w < 8 || a.h < 8) return emptyList()
-        var bm = Bitmap.createBitmap(f.px, a.t * f.width + a.l, f.width, a.w, a.h, Bitmap.Config.ARGB_8888)
-        if (zoom > 1.01) bm = Bitmap.createScaledBitmap(bm, (a.w * zoom).toInt(), (a.h * zoom).toInt(), true)
+    override fun ocr(shot: Shot): List<com.pokehunt.core.Text> = runCatching {
+        val bm = Bitmap.createBitmap(shot.width, shot.height, Bitmap.Config.ARGB_8888)
+        bm.copyPixelsFromBuffer(ByteBuffer.wrap(shot.rgba))
         val result = Tasks.await(recognizer.process(InputImage.fromBitmap(bm, 0)), 10, TimeUnit.SECONDS)
         val w = bm.width.toDouble()
         val h = bm.height.toDouble()
-        val out = ArrayList<TextHit>()
+        val out = ArrayList<com.pokehunt.core.Text>()
         // A line can span a whole row ("Quick Ball      x12"); split it where
         // the words are far apart, the way the Mac's text recognition does.
         for (block in result.textBlocks) for (line in block.lines) {
             val group = ArrayList<com.google.mlkit.vision.text.Text.Element>()
             fun flush() {
                 val boxes = group.mapNotNull { it.boundingBox }
-                if (boxes.isNotEmpty()) out.add(TextHit(group.joinToString(" ") { it.text },
+                if (boxes.isNotEmpty()) out.add(com.pokehunt.core.Text(group.joinToString(" ") { it.text },
                     (boxes.minOf { it.left } + boxes.maxOf { it.right }) / 2.0 / w,
                     (boxes.minOf { it.top } + boxes.maxOf { it.bottom }) / 2.0 / h))
                 group.clear()
@@ -505,82 +501,31 @@ class HuntService : AccessibilityService(), Phone {
             }
             flush()
         }
-        return out
-    }
+        bm.recycle()
+        out
+    }.getOrDefault(emptyList())
 
-    override fun png(f: Frame, area: Box?, maxWidth: Int): ByteArray {
-        val a = f.clip(area ?: Box(0, 0, f.width, f.height))
-        var bm = Bitmap.createBitmap(f.px, a.t * f.width + a.l, f.width, a.w, a.h, Bitmap.Config.ARGB_8888)
-        if (bm.width > maxWidth) bm = Bitmap.createScaledBitmap(bm, maxWidth, bm.height * maxWidth / bm.width, true)
-        return ByteArrayOutputStream().also { bm.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
-    }
-
-    override fun jpg(f: Frame, area: Box?, maxWidth: Int): ByteArray {
-        val a = f.clip(area ?: Box(0, 0, f.width, f.height))
-        var bm = Bitmap.createBitmap(f.px, a.t * f.width + a.l, f.width, a.w, a.h, Bitmap.Config.ARGB_8888)
-        if (bm.width > maxWidth) bm = Bitmap.createScaledBitmap(bm, maxWidth, bm.height * maxWidth / bm.width, true)
-        return ByteArrayOutputStream().also { bm.compress(Bitmap.CompressFormat.JPEG, 70, it) }.toByteArray()
-    }
-
-    override fun savePicture(png: ByteArray, name: String): String {
+    override fun savePicture(png: ByteArray, name: String): String = runCatching {
         val file = SimpleDateFormat("yyyyMMdd-HHmmss-", Locale.US).format(Date()) + name + ".png"
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, file)
             put(MediaStore.Images.Media.MIME_TYPE, "image/png")
             put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Hunt")
         }
-        val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return "-"
+        val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return@runCatching "-"
         contentResolver.openOutputStream(uri)?.use { it.write(png) }
-        return "Pictures/Hunt/$file"
-    }
+        "Pictures/Hunt/$file"
+    }.getOrDefault("-")
 
-    override fun markedShot(f: Frame, from: Pt, to: Pt?, maxWidth: Int): ByteArray {
-        val k = minOf(1.0, maxWidth.toDouble() / f.width).toFloat()
-        val src = Bitmap.createBitmap(f.px, f.width, f.height, Bitmap.Config.ARGB_8888)
-        val bm = Bitmap.createScaledBitmap(src, (f.width * k).toInt(), (f.height * k).toInt(), true)
-            .copy(Bitmap.Config.ARGB_8888, true)
-        val c = Canvas(bm)
-        val pen = Paint().apply { style = Paint.Style.STROKE; strokeWidth = 4f; color = Color.MAGENTA; isAntiAlias = true }
-        val x = from.x.toFloat() * k
-        val y = from.y.toFloat() * k
-        c.drawCircle(x, y, 14f, pen)
-        c.drawLine(x - 22, y, x + 22, y, pen)
-        c.drawLine(x, y - 22, x, y + 22, pen)
-        if (to != null) {
-            c.drawLine(x, y, to.x.toFloat() * k, to.y.toFloat() * k, pen)
-            c.drawCircle(to.x.toFloat() * k, to.y.toFloat() * k, 8f, pen)
-        }
-        return ByteArrayOutputStream().also { bm.compress(Bitmap.CompressFormat.JPEG, 70, it) }.toByteArray()
-    }
+    override fun say(line: String) = Log.print(line)
 
-    override fun drawLayout(f: Frame, lay: Layout): ByteArray {
-        val bm = Bitmap.createBitmap(f.px, f.width, f.height, Bitmap.Config.ARGB_8888).copy(Bitmap.Config.ARGB_8888, true)
-        val c = Canvas(bm)
-        val line = Paint().apply { style = Paint.Style.STROKE; strokeWidth = 4f; color = Color.MAGENTA }
-        val dot = Paint().apply { style = Paint.Style.STROKE; strokeWidth = 4f; color = Color.GREEN }
-        val boxes = listOf(Ref.BOX, Ref.ICONS, Ref.MSG, Ref.PLAYER_BOX, Ref.CHAT_MARGIN, Ref.PANEL) +
-            Ref.BUTTONS.values.map { it.first }
-        for (b in boxes) lay.box(b).let { c.drawRect(it.l.toFloat(), it.t.toFloat(), it.r.toFloat(), it.b.toFloat(), line) }
-        for (y in listOf(Ref.HP_BAR_END, Ref.BOX_END)) {
-            val a = lay.pt(Ref.BOX.l.toDouble(), y.toDouble())
-            val z = lay.pt(Ref.BOX.r.toDouble(), y.toDouble())
-            c.drawLine(a.x.toFloat(), a.y.toFloat(), z.x.toFloat(), z.y.toFloat(), line)
-        }
-        for (p in listOf(Ref.RUN, Ref.BAG, Ref.FIGHT, Ref.IDLE_SPOT, Ref.AFK_SPOT))
-            lay.pt(p).let { c.drawCircle(it.x.toFloat(), it.y.toFloat(), 12f, dot) }
-        return ByteArrayOutputStream().also { bm.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
-    }
-
-    override fun logEncounter(row: List<String>) {
-        val file = File(filesDir, "encounters.csv")
-        if (!file.exists()) file.writeText("time,species,level,shiny,tint,reskin,gradient,action\n")
-        val time = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
-        file.appendText((listOf(time) + row).joinToString(",") { csv(it) } + "\n")
-    }
-
-    private fun csv(s: String) = if (s.any { it == ',' || it == '"' || it == '\n' }) "\"${s.replace("\"", "\"\"")}\"" else s
+    override fun code(code: String?) = Hunt.refreshTile(this)
 
     override fun sound(kind: String) {
+        runCatching { playSound(kind) }
+    }
+
+    private fun playSound(kind: String) {
         val vib = getSystemService(Vibrator::class.java)
         when (kind) {
             "found" -> {
@@ -603,22 +548,5 @@ class HuntService : AccessibilityService(), Phone {
         }
     }
 
-    override fun loadCalibration(key: String): Calibration? {
-        val s = getSharedPreferences("calibration", MODE_PRIVATE).getString(key, null) ?: return null
-        return runCatching {
-            val o = JSONObject(s)
-            val colors = o.getJSONObject("colors").let { c ->
-                c.keys().asSequence().associateWith { k -> c.getJSONArray(k).let { a -> IntArray(3) { a.getInt(it) } } }
-            }
-            Calibration(o.getDouble("kx"), o.getDouble("ky"), o.getDouble("dx"), o.getDouble("dy"), colors, o.getDouble("miss"))
-        }.getOrNull()
-    }
-
-    override fun saveCalibration(key: String, cal: Calibration) {
-        val o = JSONObject().put("kx", cal.kx).put("ky", cal.ky).put("dx", cal.dx).put("dy", cal.dy).put("miss", cal.miss)
-            .put("colors", JSONObject(cal.colors.mapValues { org.json.JSONArray(it.value.toList()) }))
-        getSharedPreferences("calibration", MODE_PRIVATE).edit().putString(key, o.toString()).apply()
-    }
-
-    fun forgetCalibration() = getSharedPreferences("calibration", MODE_PRIVATE).edit().clear().apply()
+    fun forgetCalibration() = com.pokehunt.core.forgetCalibration(filesDir.path)
 }

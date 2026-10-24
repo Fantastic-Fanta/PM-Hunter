@@ -138,7 +138,7 @@ fn calibration_keeps_its_colors() {
 // ---------------------------------------------------------------- the rules and readers
 
 fn cfg() -> Config {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../android/app/src/main/assets/config.json");
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/rules-config.json");
     Config::load(&path).unwrap()
 }
 

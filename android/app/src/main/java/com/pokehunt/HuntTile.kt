@@ -15,7 +15,7 @@ class HuntTile : TileService() {
         tile.state = if (Hunt.running) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
         tile.subtitle = when {
             HuntService.instance == null -> "Set up"
-            HuntService.instance?.hunter?.running == true -> "Hunting"
+            HuntService.instance?.hunter?.running() == true -> "Hunting"
             Hunt.running -> "Paused"
             else -> "Off"
         }

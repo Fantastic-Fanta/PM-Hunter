@@ -3,7 +3,7 @@
 # text recognition of each), android/rust/ the hunter for the Android app.
 [workspace]
 resolver = "2"
-members = ["core", "window"]
+members = ["core", "window", "android/rust", "android/rust/bindgen"]
 default-members = ["core", "window"]
 
 [workspace.package]

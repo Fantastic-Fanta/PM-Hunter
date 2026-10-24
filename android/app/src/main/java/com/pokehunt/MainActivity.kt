@@ -132,14 +132,14 @@ class MainActivity : Activity() {
         website = text("", 16f, TEXT)
         webCard.addView(website)
         val webButtons = LinearLayout(this).apply { setPadding(0, dp(12), 0, 0) }
-        for ((label, f) in listOf<Pair<String, (Remote) -> Unit>>(
+        for ((label, f) in listOf<Pair<String, (com.pokehunt.core.Hunter) -> Boolean>>(
             "New code" to { it.newCode() },
             "Log out browsers" to { it.logOutBrowsers() },
         )) {
             webButtons.addView(button(label, BG, TEXT) {
-                val remote = HuntService.instance?.remote ?: return@button
+                val hunter = HuntService.instance?.hunter ?: return@button
                 Thread {
-                    val ok = runCatching { f(remote) }.isSuccess
+                    val ok = runCatching { f(hunter) }.getOrDefault(false)
                     runOnUiThread {
                         Toast.makeText(this, if (!ok) "No connection to poopihunt.xyz" else if (label == "New code")
                             "New code: the old one won't work" else "Every browser is logged out", Toast.LENGTH_SHORT).show()
@@ -329,21 +329,20 @@ class MainActivity : Activity() {
 
     private fun save() {
         val text = config.text.toString()
-        try {
-            Config(text)
-            Hunt.configFile(this).writeText(text)
-            Toast.makeText(this, if (Hunt.running) "Saved. Restart to use it" else "Saved",
-                           Toast.LENGTH_SHORT).show()
-        } catch (e: Exception) {
-            Toast.makeText(this, "Not saved: ${e.message}", Toast.LENGTH_LONG).show()
+        val mistake = com.pokehunt.core.checkConfig(text)
+        if (mistake != null) {
+            Toast.makeText(this, "Not saved: $mistake", Toast.LENGTH_LONG).show()
+            return
         }
+        Hunt.configFile(this).writeText(text)
+        Toast.makeText(this, if (Hunt.running) "Saved. Restart to use it" else "Saved", Toast.LENGTH_SHORT).show()
     }
 
     private fun calibrate() {
         val h = HuntService.instance?.hunter
         if (h == null) Toast.makeText(this, "Start hunting first", Toast.LENGTH_SHORT).show()
         else {
-            h.calibrateNext = true
+            h.calibrateNext()
             Toast.makeText(this, "Next battle. Picture in Pictures/Hunt", Toast.LENGTH_LONG).show()
         }
     }
@@ -370,7 +369,7 @@ class MainActivity : Activity() {
                 service == null -> "○" to "Not set up"
                 starting -> "◌" to "Starting"
                 hunter == null -> "○" to "Ready"
-                hunter.running -> "●" to "Hunting"
+                hunter.running() -> "●" to "Hunting"
                 else -> "◐" to "Off"
             }
             dot.text = mark
@@ -379,13 +378,14 @@ class MainActivity : Activity() {
             detail.text = if (service == null)
                 "Greyed out? Settings › Apps › Hunt › ⋮ › Allow restricted settings" else ""
             detail.visibility = if (detail.text.isEmpty()) View.GONE else View.VISIBLE
-            val remote = service?.remote
+            val remote = hunter?.takeIf { it.linked() }
+            val code = remote?.code() ?: ""
             website.text = when {
                 remote == null -> ""
-                remote.code.isNotEmpty() -> android.text.SpannableStringBuilder("Website code\n").append(remote.code,
+                code.isNotEmpty() -> android.text.SpannableStringBuilder("Website code\n").append(code,
                     android.text.style.RelativeSizeSpan(2f), 0).append("\n").append("poopihunt.xyz/app",
                     android.text.style.ForegroundColorSpan(DIM), 0)
-                remote.loggedIn -> "A browser logged in on poopihunt.xyz with the code, so it's spent. " +
+                remote.loggedIn() -> "A browser logged in on poopihunt.xyz with the code, so it's spent. " +
                     "New code gives another."
                 else -> "Connecting to poopihunt.xyz…"
             }

@@ -16,7 +16,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
 import android.view.WindowManager
-import java.nio.ByteOrder
+import com.pokehunt.core.Shot
 
 /** Screenshots through Android's screen recording, for when the
  *  accessibility service's screenshots come back blank (some emulators).
@@ -35,7 +35,7 @@ class CaptureService : Service() {
     private val handler = Handler(thread.looper)
     @Volatile var shrink = 1.0  // screen px per frame px
         private set
-    private var last: Frame? = null  // a still screen sends no new pictures
+    private var last: Shot? = null  // a still screen sends no new pictures
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -92,25 +92,21 @@ class CaptureService : Service() {
 
     /** The newest picture of the screen, or null if there's none yet. */
     @Synchronized
-    fun grab(): Frame? {
+    fun grab(): Shot? {
         fit()
         val img = reader?.acquireLatestImage() ?: return last?.takeIf { it.width == reader?.width }
         img.use {
+            // RGBA bytes, a row at a time (rows can be padded)
             val plane = it.planes[0]
-            val ints = plane.buffer.order(ByteOrder.LITTLE_ENDIAN).asIntBuffer()
+            val buf = plane.buffer
             val w = it.width
             val h = it.height
-            val px = IntArray(w * h)
+            val out = ByteArray(w * h * 4)
             for (y in 0 until h) {
-                ints.position(y * plane.rowStride / 4)
-                ints.get(px, y * w, w)
+                buf.position(y * plane.rowStride)
+                buf.get(out, y * w * 4, w * 4)
             }
-            // RGBA bytes read as little-endian ints are ABGR: swap R and B
-            for (i in px.indices) {
-                val c = px[i]
-                px[i] = (c and 0x0000FF00) or ((c and 0xFF) shl 16) or ((c shr 16) and 0xFF) or (0xFF shl 24)
-            }
-            return Frame(w, h, px).also { f -> last = f }
+            return Shot(w, h, out).also { s -> last = s }
         }
     }
 

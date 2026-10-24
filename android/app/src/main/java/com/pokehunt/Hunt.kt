@@ -37,11 +37,8 @@ object Hunt {
      *  allowed first) or the config's problem. */
     fun start(ctx: Context): String? {
         val service = HuntService.instance ?: return "service"
-        val cfg = try {
-            Config(configFile(ctx).readText())
-        } catch (e: Exception) {
-            return "What to hunt has a mistake: ${e.message}"
-        }
+        val cfg = configFile(ctx).readText()
+        com.pokehunt.core.checkConfig(cfg)?.let { return "What to hunt has a mistake: $it" }
         if (CaptureService.instance == null && !service.screenshotsWork()) return "capture"
         service.startHunt(cfg, watchOnly(ctx), debugMode(ctx))
         return null
