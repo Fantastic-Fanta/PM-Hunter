@@ -121,6 +121,7 @@ impl Hunt {
     pub(crate) fn save_game(&mut self, wait: f64) -> R<bool> {
         let (mut step, mut saved, mut shown, mut saved_at, mut tries) = ("save", false, false, 0.0, 0);
         let (mut tab, mut tab_at) = (None::<Pt>, 0.0);
+        let (mut after, mut closed_at) = ("close", 0.0); // where a message's going leads
         let f = self.grab();
         if self.find_mute(&f, None).is_some() {
             return Ok(false); // an encounter's on: not now
@@ -183,7 +184,7 @@ impl Hunt {
                     self.click(msg.pt())?;
                     self.nap(0.3)?;
                 } else if shown {
-                    step = "close"; // the message was there and is gone now
+                    step = after; // the message was there and is gone now
                 } else if now() - saved_at > (if quick && tries == 0 { 2.5 } else { 4.0 }) && tries < 2 {
                     // Save didn't take
                     tries += 1;
@@ -191,17 +192,27 @@ impl Hunt {
                     step = "save";
                 }
             }
+            if (step == "close" || step == "closed") && texts.iter().any(|t| save_message(&t.text)) {
+                // "Do not close the game until it says 'Save successful'" goes, then a
+                // moment later "Save successful…" comes up: that one's clicked away too
+                (after, step) = (step, "message");
+                continue;
+            }
             if step == "close" {
                 // the menu panel comes back; its tab closes it
                 if menu_open(&texts) {
                     if let Some(hit) = find_menu_tab(&f, &texts) {
                         self.trace("save: closing the menu");
                         self.click(hit)?;
-                        step = "closed";
+                        (step, closed_at) = ("closed", now());
                     }
                 }
-            } else if step == "closed" && !menu_open(&texts) {
-                return Ok(saved);
+            } else if step == "closed" {
+                if !menu_open(&texts) {
+                    return Ok(saved);
+                } else if now() - closed_at > 2.0 {
+                    step = "close"; // (the tab's click went to a message)
+                }
             }
         }
         let shot = img.as_ref().map(|f| self.snapshot(f, &format!("save-stuck-at-{step}"))).unwrap_or_default();
