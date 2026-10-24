@@ -61,6 +61,18 @@ pub fn is_count(t: &str) -> bool {
     COUNT.is_match(t)
 }
 
+/// Every species' name (PokeAPI's, species.txt), letters only: "typenull", "mrmime".
+static SPECIES: LazyLock<std::collections::HashSet<String>> =
+    LazyLock::new(|| include_str!("species.txt").lines().map(norm).filter(|n| !n.is_empty()).collect());
+
+/// A real Pokemon's name, or a form of one ("Galarian Articuno", "Hisuian-Qwilfish",
+/// "Type: Null"), not a misread ("Me Ill" for "Mew").
+pub fn known_species(name: &str) -> bool {
+    let n = norm(name);
+    !n.is_empty() && (SPECIES.contains(&n)
+        || name.split(|c: char| c == ' ' || c == '-').any(|w| w.chars().count() >= 3 && SPECIES.contains(&norm(w))))
+}
+
 pub fn two_letters(t: &str) -> bool {
     TWO_LETTERS.is_match(t)
 }
@@ -360,6 +372,16 @@ mod tests {
 
     fn hit(t: &str, x: f64, y: f64) -> TextHit {
         TextHit::new(t, x, y)
+    }
+
+    #[test]
+    fn species_names() {
+        for good in ["Mew", "Entei", "Type: Null", "Galarian Articuno", "Hisuian-Qwilfish", "Mr. Mime", "Pichu-Spiky-eared"] {
+            assert!(known_species(good), "{good}");
+        }
+        for bad in ["Me Ill", "", "L\". 20"] {
+            assert!(!known_species(bad), "{bad}");
+        }
     }
 
     #[test]

@@ -717,28 +717,34 @@ impl Hunt {
     pub(crate) fn read_enemy(&mut self, f: &Frame, lay: &Layout) -> Enc {
         let texts = self.ocr(f, Some(lay.boxed(layout::BOX)), Self::zoom(lay));
         let mut enc = reader::enemy(&texts);
-        if enc.species.is_empty() {
-            // the box made bigger read without the name (Windows, a Coal Entei's light italic
-            // "Entei": every read nameless, none agreed, it was waited on): as it is, then
+        // the name, the first way it reads as a real Pokemon's (species.txt): the box made
+        // bigger, as it is, then its row on its own (Windows: a light italic "Entei" gone from
+        // the bigger box, "Mew" read "Me Ill" there and missed at all in the box)
+        if !reader::known_species(&enc.species) {
             let plain = reader::enemy(&self.ocr(f, Some(lay.boxed(layout::BOX)), 1.0));
-            enc.species = plain.species;
+            if reader::known_species(&plain.species) || enc.species.is_empty() {
+                enc.species = plain.species;
+            }
             if enc.level.is_empty() {
                 enc.level = plain.level;
             }
         }
-        if enc.species.is_empty() {
-            // a short name missed both ways ("Mew": Windows reads only "Lv. 18" in its box): its
-            // row on its own, made bigger, its ink apart from the box's gray
-            enc.species = reader::clean_name(&self.row_text(f, lay, layout::NAME_ROW, &["x2", "far"]));
+        if !reader::known_species(&enc.species) {
+            let row = reader::clean_name(&self.row_text(f, lay, layout::NAME_ROW, &["x2", "far"]));
+            if reader::known_species(&row) || enc.species.is_empty() {
+                enc.species = row;
+            }
         }
         if self.traits.ocr_rows {
             // Windows' text recognition misses these two in the whole box: each is read on its own
+            // (each kept only when it reads at least as much as the box did: "FLUID" alone
+            // isn't "TOXIC FLUID")
             let r = self.row_text(f, lay, layout::RESKIN_ROW, &["x2", "far"]);
-            if !r.is_empty() {
+            if !r.is_empty() && r.chars().count() >= enc.reskin.chars().count() {
                 enc.reskin = r;
             }
             let g = self.row_text(f, lay, layout::GRADIENT_TAB, &["sat", "far"]);
-            if !g.is_empty() {
+            if !g.is_empty() && g.chars().count() >= enc.gradient.chars().count() {
                 enc.gradient = g;
             }
         }
