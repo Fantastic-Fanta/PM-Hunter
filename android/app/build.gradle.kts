@@ -2,7 +2,7 @@ import groovy.json.JsonSlurper
 import java.text.SimpleDateFormat
 import java.util.Date
 
-// The debug channel's webhook comes from secrets.json (next to pokehunt.py), which isn't in the
+// The debug channel's webhook comes from secrets.json (at the repository's top), which isn't in the
 // repository; without it the app reports nowhere until its config says "debug_webhook".
 val secrets = rootProject.file("../secrets.json").takeIf { it.exists() }
     ?.let { JsonSlurper().parse(it) as Map<*, *> } ?: emptyMap<String, Any>()

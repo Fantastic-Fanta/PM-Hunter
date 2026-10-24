@@ -1,4 +1,4 @@
-//! The same answers as pokehunt.py (the Python hunter this was ported from) on
+//! The same answers as pokehunt.py (the Python hunter this was ported from, as of 51c9a8a) on
 //! every sample in samples/: parity.json is what it saw, by its colors (the
 //! text recognition is each platform's own).
 

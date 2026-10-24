@@ -1,9 +1,8 @@
 # PM-Hunter
 
 Copy `config.example.json` to `config.json` and put your Discord webhook in it.
-Builds that report to the debug channels (`make-windows-zip.sh`,
-`publish-android.sh`) read the addresses from `secrets.json`, which isn't in
-the repository: `{"windows_debug_webhook": "...", "android_debug_webhook": "..."}`.
+The Android build reports to its debug channel from `secrets.json`, which isn't
+in the repository: `{"android_debug_webhook": "..."}` (Windows' is a GitHub secret).
 
 Hunts wild encounters in the Roblox Pokemon game: runs from the ones you don't
 want, catches the ones worth a ball, and pings Discord and holds the battle for
@@ -13,13 +12,40 @@ The layout is fitted to each screen on its first encounter (auto-calibration),
 so any window size or phone shape works. It's refitted whenever a battle can't
 be read.
 
+## How it's built
+
+All of it is Rust, one Cargo workspace:
+
+- `core/` (hunt-core): the hunter itself, the same on every platform: reading
+  the screen by its colors (the Mute button, the battle menu, the enemy's box,
+  the bag), fitting the layout, the rules, the catch plan, the bag and MENU,
+  saving, the website link, the Discord and debug channel posts. What it needs
+  from a computer or phone (screenshots, clicks or taps, text recognition) is a
+  `Device`. `cargo test -p hunt-core` checks it against `samples/`
+  (`core/tests/parity.json`: what the old Python hunter saw on each, to the
+  pixel), squeezed into phone shapes too, and runs a hunt on a pretend screen.
+- `window/` (Hunt, Hunt.exe): the pill with the hunter in it, and each
+  system's eyes and hands (`window/src/desktop/`): on a Mac, Quartz screenshots
+  and mouse, Vision's text recognition; on Windows, GDI screenshots, SendInput,
+  Windows.Media.Ocr. `Hunt --terminal` is the hunter alone in a Terminal
+  (`--watch`, `--paused`, `--debug`, `--practice N`, `--calibrate`);
+  `Hunt --diagnose` reads the samples, looks at the screen, moves the mouse;
+  `Hunt --image x.png` reads a screenshot; `Hunt --test-discord`.
+- `android/rust/` (libhunt.so): hunt-core for the Android app, reached from
+  Kotlin through UniFFI; `android/` is the app around it (the accessibility
+  service's screenshots and taps, ML Kit's text recognition, the screens).
+
+`cargo run --release -p hunt-core --example bench` times the hunter's own work.
+
 ## Mac
 
 Double-click `Poopihunt.command` for Poopihunt's window (the pill, as on Windows; it
-builds it the first time, which needs Rust: `brew install rust`), or
+builds Hunt the first time, which needs Rust: `brew install rust`), or
 `pokehunt.command` for the hunter in Terminal alone. Ctrl+Shift+H pauses and
-resumes. On the Mac the pill shows in screenshots and there's no self-update
-(a `git pull` brings the new version; Poopihunt.command builds the window again).
+resumes. Terminal holds the Screen Recording and Accessibility grants, so
+Hunt runs from it. The hunter's screenshots are of what's under the pill.
+There's no self-update (a `git pull` brings the new version; Poopihunt.command
+builds Hunt again).
 
 Every reskin with a gradient is caught, on every platform, without a rule
 for it: `"catch_reskin_gradient": false` in config.json turns that off.
@@ -43,9 +69,8 @@ from when Hunt opens; click it for the website), a box for the Discord
 webhook (saved in config.json; a hunt that's on starts again with it), Hunt's
 folder and quit. It opens with Clodsire (`windows/hunt-icon.png`) big in the
 middle of the dimmed screen, flying into the pill's end as play; it closes
-by shrinking right into a ball. A find turns it white. The hunter itself is
-pokehunt.py (hunt-engine.exe), run by the window with `--window --paused`; the
-window's buttons reach it as lines (`toggle`, `test on`, `test off`). It
+by shrinking right into a ball. A find turns it white. The hunter runs inside
+Hunt.exe (paused from when it opens), on a thread of its own. It
 catches the optimal way (a Quick Ball first, Repeat Balls, Timer Balls once 9
 turns have gone by; a favorited Park Ball before all of them), unless
 config.json's `catch` says otherwise. What a PC keeps (config.json, finds,
@@ -57,14 +82,14 @@ checks https://poopihunt.xyz/windows.json when it opens and whenever a hunt
 stops; a newer build is downloaded, installed, and Hunt starts again.
 
 `./publish-windows.sh` builds it on GitHub (`.github/workflows/windows.yml`:
-PyInstaller with `windows/hunt.spec`, Inno Setup with `windows/hunt.iss`,
-Python 3.12) and publishes it; GitHub builds what's pushed, so push first.
-The build also reads the samples with Windows' OCR (the "read like on the
-Mac" line), and Hunt.exe has to come up and go through its states (`--smoke`,
-with a picture of the screen in the run's `pill` files). Pushes build it too,
-as a check. On a Mac the same window runs the Python hunter:
+the tests, `cargo build --release -p hunt`, Inno Setup with `windows/hunt.iss`)
+and publishes it; GitHub builds what's pushed, so push first. The build also
+reads the samples with Windows' text recognition (`Hunt.exe --diagnose`, the
+"read like on the Mac" line), and Hunt.exe has to come up and go through its
+states (`--smoke`, with a picture of the screen in the run's `pill` files).
+Pushes build it too, as a check. On a Mac the same window:
 
-    HUNT_ENGINE="$PWD/.venv/bin/python -u $PWD/pokehunt.py" HUNT_DATA=$PWD cargo run --manifest-path window/Cargo.toml
+    HUNT_DATA=$PWD cargo run --release -p hunt
 
 (`HUNT_WATCH=1` too, for one that never clicks; `--start` hunts at once,
 `HUNT_PREVIEW=1` never does; `--smoke --intro` goes through its states with
@@ -73,16 +98,13 @@ the opening and the closing.) The icon: `python windows/make_icon.py`.
 Published builds report debug runs in full (their lines, calibration, the
 first 10 clicks, each step's picture) and otherwise only what goes wrong (the
 line with the 15 before it, its screenshot, crashes) to the Windows debug
-channel (`debuglog.py`; the address is the repository's
-`WINDOWS_DEBUG_WEBHOOK` secret, `"debug_webhook"` in config.json changes it,
+channel (`core/src/out.rs`; the address is the repository's
+`WINDOWS_DEBUG_WEBHOOK` secret, built in, `"debug_webhook"` in config.json changes it,
 `""` turns it off, so does **Send problem reports**).
 
 Clicks go through Windows' `SendInput` with small relative mouse moves, the way
 a real mouse reaches Roblox. Text is read with Windows' own OCR. Keep Roblox on
 the main screen.
-
-The older test zip (`./make-windows-zip.sh`, needs Python on the PC, then
-**1 Check**, **2 Watch only**, **3 Hunt**) still works.
 
 ## Android (just the phone, no computer)
 
@@ -147,6 +169,8 @@ poopihunt.xyz lives on the stingray server in its own folder
 (`/srv/poopihunt.xyz`, owner `poopihunt`, nginx site `poopihunt.xyz`, the API
 as the `poopihunt-api` service), apart from stingray-digital.online.
 
-Building it: `cd android && ./gradlew assembleDebug` (needs the Android SDK; the
+Building it: `cd android && ./gradlew assembleDebug` (needs the Android SDK and
+NDK 27, rustup's Rust with `rustup target add aarch64-linux-android`, and
+`cargo install cargo-ndk`: Gradle builds libhunt.so and its Kotlin first; the
 APK lands in `app/build/outputs/apk/debug/`). `./gradlew testDebugUnitTest`
-checks the screen reading against `samples/`.
+runs the Rust hunter through the app's Kotlin on this computer.
