@@ -36,14 +36,6 @@
   ],
   "notify": [
     {
-      "species": "legendary",
-      "reskin": "any"
-    },
-    {
-      "species": "legendary",
-      "gradient": "any"
-    },
-    {
       "reskin": "Doodle",
       "shiny": true,
       "not_species": "Frillish"

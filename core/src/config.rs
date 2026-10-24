@@ -61,6 +61,11 @@ impl Config {
         };
         let targets = rules("targets")?;
         let mut notify = rules("notify")?;
+        // a legendary with just a reskin, or just a gradient, isn't caught: the bar is a reskin
+        // and a gradient, for every Pokemon (auto_catch). Those two rules were in the example
+        // config every install started from, so they're dropped here too
+        let half = [json!({"species": "legendary", "reskin": "any"}), json!({"species": "legendary", "gradient": "any"})];
+        notify.retain(|r| !half.iter().any(|h| h.as_object() == Some(r)));
         let post = rules("post")?;
         for rule in targets.iter().chain(&notify).chain(&post) {
             let mut bad: Vec<&String> =
@@ -158,6 +163,11 @@ mod tests {
     fn mistakes_are_said() {
         assert!(Config::parse(r#"{"targets": [{"specie": "Mew"}]}"#).unwrap_err().contains("unknown field(s) specie"));
         assert!(Config::parse(r#"{"catch_reskin_gradient": false}"#).unwrap_err().contains("nothing to hunt for"));
+        // a legendary needs a reskin and a gradient too, as every Pokemon
+        let c = Config::parse(r#"{"notify": [{"species": "legendary", "reskin": "any"},
+                                             {"species": "legendary", "gradient": "any"},
+                                             {"species": "legendary", "reskin": "Night"}]}"#).unwrap();
+        assert_eq!(c.notify.len(), 2); // the Night one, and reskin + gradient
         let c = Config::parse(r#"{"targets": [{"species": "Mew"}], "catch": {"first_ball": null}}"#).unwrap();
         assert_eq!(c.str("first_ball"), "");
     }

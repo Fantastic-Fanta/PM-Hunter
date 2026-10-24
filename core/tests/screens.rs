@@ -168,8 +168,9 @@ fn matches_the_config() {
     assert!(wanted(&e("Suicune", "Doodle", "", false, false), &c.targets).is_some());
     assert!(wanted(&e("Lapras", "Doodle", "", false, false), &c.targets).is_none());
     assert!(wanted(&e("Marill", "INFERNO", "", false, true), &c.targets).is_none());
-    // auto-catch: legendary with a reskin, any reskin + gradient, shiny Doodle but not Frillish
-    assert!(wanted(&e("Galarian Articuno", "Night", "", false, false), &c.notify).is_some());
+    // auto-catch: any reskin + gradient (a legendary too: not a reskin alone), shiny Doodle but not Frillish
+    assert!(wanted(&e("Galarian Articuno", "Night", "", false, false), &c.notify).is_none());
+    assert!(wanted(&e("Galarian Articuno", "Night", "Moonbane", false, false), &c.notify).is_some());
     assert!(wanted(&e("Marill", "INFERNO", "Mirage", false, false), &c.notify).is_some());
     assert!(wanted(&e("Marill", "Doodle", "", true, false), &c.notify).is_some());
     assert!(wanted(&e("Frillish", "Doodle", "", true, false), &c.notify).is_none());
