@@ -44,10 +44,14 @@ class PillView(ctx: Context, private val tall: Float = 40f) : FrameLayout(ctx) {
     var actions: Actions? = null
     enum class State { SETUP, OFF, STARTING, HUNTING }
 
+    // (what's in it sizes it: a change makes it fit again)
     var state = State.OFF
+        set(v) { if (field != v) { field = v; requestLayout() } }
     var testing = false
     var code = ""      // the website's code, "" while it's on its way (three dots)
-    var words = ""     // in the code's place when there's no code: "Off", "Turn on", "Code used"
+        set(v) { if (field != v) { field = v; requestLayout() } }
+    var words = ""     // in the code's place when there's no code: "Off", "In use"
+        set(v) { if (field != v) { field = v; requestLayout() } }
     var progress: Float? = null  // an update: 0 to 1, 1 installing
 
     // the desktop pill's look (look(false))
@@ -68,6 +72,7 @@ class PillView(ctx: Context, private val tall: Float = 40f) : FrameLayout(ctx) {
         typeface = inter
         textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, tall * 0.33f, resources.displayMetrics)
         letterSpacing = 0.06f
+        fontFeatureSettings = "tnum"  // digits all as wide: codes line up
     }
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val bug = context.getDrawable(R.drawable.bug)!!.mutate()
@@ -104,12 +109,26 @@ class PillView(ctx: Context, private val tall: Float = 40f) : FrameLayout(ctx) {
     // ------------------------------------------------------------ where things are
 
     private val playAt get() = inset + control / 2
-    private val codeLeft get() = inset + control + dp(14f)
-    private val codeRight get() = codeLeft + text.measureText("WWWWWW")
+    private val codeLeft get() = inset + control + dp(12f)
+    private val dotsWidth get() = dp(24f)
+
+    /** What's shown in the code's place: the code, the three dots, or a word. */
+    private val labelWidth: Float get() = when {
+        code.isNotEmpty() -> text.measureText(code)
+        state == State.HUNTING || state == State.STARTING -> dotsWidth
+        else -> text.measureText(words)
+    }
+    private val codeRight get() = codeLeft + labelWidth
+
+    // as wide as what's in it: from the text, as far to the round end as play's circle is
+    // from the text (the space round play's circle, again after the text)
+    private val goalWidth get() = codeRight + (codeLeft - inset - control) + inset * 2
+    private var drawnWidth = 0f
+    private var widthAt = 0L
 
     override fun onMeasure(widthSpec: Int, heightSpec: Int) {
-        // play and the code, the round end as far past it as play is from the left
-        setMeasuredDimension((codeRight + h / 2).toInt(), h.toInt())
+        // (the window as wide as the wider of now and where it's going: it slides there)
+        setMeasuredDimension(max(goalWidth, drawnWidth).toInt() + 1, h.toInt())
     }
 
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {}
@@ -122,7 +141,19 @@ class PillView(ctx: Context, private val tall: Float = 40f) : FrameLayout(ctx) {
         val grow = min(1f, spring(t / 0.55f))
         val reveal = ease((t - 0.3f) / 0.45f)
         if (reveal < 1f) postInvalidateOnAnimation()
-        val shape = RectF(0f, 0f, h + (width - h) * grow, h)
+        // the width easing to fit what's in it
+        val now = SystemClock.uptimeMillis()
+        if (drawnWidth == 0f) drawnWidth = goalWidth
+        val k = min(1f, (now - widthAt) / 1000f * 12f)
+        widthAt = now
+        drawnWidth += (goalWidth - drawnWidth) * k
+        if (kotlin.math.abs(goalWidth - drawnWidth) < 0.5f) {
+            if (drawnWidth != goalWidth) {
+                drawnWidth = goalWidth
+                requestLayout()  // (the window down to it)
+            }
+        } else postInvalidateOnAnimation()
+        val shape = RectF(0f, 0f, h + (drawnWidth - h) * grow, h)
         val r = h / 2
         paint.color = EDGE
         canvas.drawRoundRect(shape, r, r, paint)  // a hairline round it, for dark games
@@ -191,12 +222,12 @@ class PillView(ctx: Context, private val tall: Float = 40f) : FrameLayout(ctx) {
         val dark = ease(updating / 0.55f)
         val words = ease((updating - 0.4f) / 0.6f)
         val r = h / 2
-        val inner = RectF(1f, 1f, width - 1f, h - 1)
+        val inner = RectF(1f, 1f, drawnWidth - 1f, h - 1)
         paint.color = Color.BLACK
         paint.alpha = (255 * dark).toInt()
         canvas.drawRoundRect(inner, r - 1, r - 1, paint)
         val done = anim("progress", progress ?: 1f, 0.3f)
-        val track = RectF(inset, inset, width - inset, h - inset)
+        val track = RectF(inset, inset, drawnWidth - inset, h - inset)
         val bar = RectF(track.left, track.top, track.left + control + (track.width() - control) * done, track.bottom)
         paint.color = BOXED
         paint.alpha = (127 * words).toInt()
@@ -209,7 +240,7 @@ class PillView(ctx: Context, private val tall: Float = 40f) : FrameLayout(ctx) {
         val y = h / 2 - (text.ascent() + text.descent()) / 2
         // the words white on the black, black on the white
         canvas.save()
-        canvas.clipRect(bar.right, 0f, width.toFloat(), h)
+        canvas.clipRect(bar.right, 0f, drawnWidth, h)
         text.color = INK
         text.alpha = (255 * words).toInt()
         canvas.drawText(label, x, y, text)
