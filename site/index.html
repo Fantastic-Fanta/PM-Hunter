@@ -43,19 +43,42 @@
   <div class="bg"></div>
   <div class="win">
     <h1>POOPIHUNT</h1>
-    <a href="APKFILE" download class="on" style="top:32px" data-say="For your phone: Android 11
+    <a href="APKFILE" download data-os="android" data-say="For your phone: Android 11
 or newer. Build BUILD."><i></i>DOWNLOAD FOR ANDROID</a>
-    <a href="WINDOWS_FILE" download style="top:50px" data-say="For your PC: Windows 10 or 11.
+    <a href="WINDOWS_FILE" download data-os="windows" data-say="For your PC: Windows 10 or 11.
 Build WINDOWS_BUILD."><i></i>DOWNLOAD FOR WINDOWS</a>
-    <a href="/app/" style="top:68px" data-say="Watch and battle from
+    <a href="MAC_FILE" download data-os="mac" data-say="For your Mac: macOS 11+.
+Build MAC_BUILD."><i></i>DOWNLOAD FOR MAC</a>
+    <a href="/app/" data-say="Watch and battle from
 this browser."><i></i>PLAY ON THE WEB</a>
+    <a href="#" id="more" data-say="Hunt for the other kinds
+of phones and computers."><i></i>OTHER DOWNLOADS</a>
   </div>
   <div class="msgbox"><div class="msgframe"><div class="msgtext" id="say"></div></div></div>
 </div>
 <script>
 "use strict";
-// zoomed to fit; the ▶ follows the mouse or the arrow keys, Enter / Z chooses
-const app = document.getElementById("app"), links = [...document.querySelectorAll("a")];
+// zoomed to fit; the ▶ follows the mouse or the arrow keys, Enter / Z chooses.
+// The download for this browser's system only (an Android phone, a PC, a Mac),
+// the others under OTHER DOWNLOADS.
+const app = document.getElementById("app"), every = [...document.querySelectorAll(".win a")];
+const ua = navigator.userAgent, touch = navigator.maxTouchPoints > 1;
+const os = /Android/i.test(ua) ? "android"
+  : /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && touch) ? "ios"  // (an iPad says Macintosh)
+  : /Windows/.test(ua) ? "windows" : /Macintosh|Mac OS X/.test(ua) ? "mac" : "";
+const more = document.getElementById("more");
+let links = [], all = false;
+function layout() {
+  const downloads = every.filter(a => a.dataset.os), mine = downloads.filter(a => a.dataset.os === os);
+  const others = downloads.length > mine.length;
+  links = all ? [...downloads, every.find(a => a.getAttribute("href") === "/app/")]
+              : [...mine, every.find(a => a.getAttribute("href") === "/app/"), ...(others ? [more] : [])];
+  const step = links.length > 3 ? 16 : 18, top = links.length > 3 ? 26 : 32;  // (four fit inside the frame)
+  every.forEach(a => { a.style.display = links.includes(a) ? "" : "none"; });
+  links.forEach((a, i) => { a.style.top = top + step * i + "px"; });
+}
+more.addEventListener("click", e => { e.preventDefault(); all = true; layout(); point(0); });
+layout();
 function fit() {
   const k = Math.min(innerWidth / 240, innerHeight / 160);
   app.style.zoom = k >= 2 ? Math.floor(k * 4) / 4 : k;
@@ -65,13 +88,13 @@ fit();
 let cur = 0, typing = 0;
 function point(i) {
   cur = i;
-  links.forEach((a, n) => a.classList.toggle("on", n === i));
+  every.forEach(a => a.classList.toggle("on", a === links[i]));
   const text = links[i].dataset.say, el = document.getElementById("say");
   clearInterval(typing);
   let n = 0;
   typing = setInterval(() => { el.textContent = text.slice(0, ++n); if (n >= text.length) clearInterval(typing); }, 28);
 }
-links.forEach((a, i) => a.addEventListener("pointerenter", () => { if (cur !== i) point(i); }));
+every.forEach(a => a.addEventListener("pointerenter", () => { const i = links.indexOf(a); if (i >= 0 && cur !== i) point(i); }));
 addEventListener("keydown", e => {
   if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); point((cur + (e.key === "ArrowDown" ? 1 : -1) + links.length) % links.length); }
   else if (e.key === "Enter" || e.key.toLowerCase() === "z") links[cur].click();

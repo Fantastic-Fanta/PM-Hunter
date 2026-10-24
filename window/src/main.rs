@@ -57,6 +57,12 @@ const VANISH: f32 = 0.25; // s, the ball going
 const INK: Color32 = Color32::from_rgb(0x11, 0x11, 0x11);
 const PAPER: Color32 = Color32::WHITE;
 
+/// Where a newer build is looked for, the file it comes as, and this system's name for the website.
+#[cfg(target_os = "macos")]
+const UPDATES: (&str, &str, &str) = ("mac.json", "Hunt-mac.zip", "darwin");
+#[cfg(not(target_os = "macos"))]
+const UPDATES: (&str, &str, &str) = ("windows.json", "PoopihuntSetup.exe", "windows");
+
 fn version() -> u64 {
     engine::build().0
 }
@@ -612,8 +618,8 @@ impl Hunt {
         }
         let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
         thread::spawn(move || {
-            let info = ureq::get(&format!("{}/windows.json", site()))
-                .set("User-Agent", &format!("Hunt (windows, {})", name()))
+            let info = ureq::get(&format!("{}/{}", site(), UPDATES.0))
+                .set("User-Agent", &format!("Hunt ({}, {})", UPDATES.2, name()))
                 .timeout(Duration::from_secs(15))
                 .call()
                 .ok()
@@ -644,12 +650,12 @@ impl Hunt {
         let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
         thread::spawn(move || {
             let result = (|| -> Result<PathBuf, String> {
-                let file = info.get("file").and_then(Value::as_str).unwrap_or("PoopihuntSetup.exe");
+                let file = info.get("file").and_then(Value::as_str).unwrap_or(UPDATES.1);
                 let number = info.get("version").and_then(Value::as_u64).unwrap_or(0);
-                let path = env::temp_dir().join(format!("PoopihuntSetup-{number}.exe"));
+                let path = env::temp_dir().join(format!("{number}-{file}"));
                 let part = path.with_extension("part");
                 let resp = ureq::get(&format!("{}/{file}", site()))
-                    .set("User-Agent", &format!("Hunt (windows, {})", name()))
+                    .set("User-Agent", &format!("Hunt ({}, {})", UPDATES.2, name()))
                     .timeout(Duration::from_secs(300))
                     .call()
                     .map_err(|e| e.to_string())?;
@@ -701,6 +707,16 @@ impl Hunt {
                 .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"])
                 .creation_flags(0x0000_0008) // DETACHED_PROCESS
                 .spawn();
+        }
+        // a Mac: the new Hunt.app (a zip) put in this one's place once this one's gone, and opened
+        #[cfg(target_os = "macos")]
+        if let (Some(zip), Some(app)) = (&self.installer, engine::app_bundle()) {
+            let script = format!(
+                "while kill -0 {pid} 2>/dev/null; do sleep 0.2; done; d=$(mktemp -d) && ditto -x -k '{zip}' \"$d\" && \
+                 [ -d \"$d/Hunt.app\" ] && rm -rf '{app}' && mv \"$d/Hunt.app\" '{app}'; rm -rf \"$d\" '{zip}'; open '{app}'",
+                pid = std::process::id(), zip = zip.display(), app = app.display());
+            let _ = Command::new("/bin/sh").args(["-c", &script]).stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
         }
     }
 

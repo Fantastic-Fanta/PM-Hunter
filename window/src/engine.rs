@@ -15,8 +15,10 @@ use std::{env, fs};
 pub fn build() -> &'static (u64, String) {
     static BUILD: OnceLock<(u64, String)> = OnceLock::new();
     BUILD.get_or_init(|| {
+        // next to Hunt.exe; in Hunt.app, its Resources
         let info = env::current_exe().ok()
-            .and_then(|exe| fs::read_to_string(exe.with_file_name("build.json")).ok())
+            .and_then(|exe| fs::read_to_string(exe.with_file_name("build.json"))
+                .or_else(|_| fs::read_to_string(exe.with_file_name("../Resources/build.json"))).ok())
             .and_then(|text| serde_json::from_str::<Value>(&text).ok());
         let get = |key| info.as_ref().and_then(|i| i.get(key).cloned());
         (get("version").and_then(|v| v.as_u64()).unwrap_or(0),
@@ -24,12 +26,27 @@ pub fn build() -> &'static (u64, String) {
     })
 }
 
-/// What a computer keeps: HUNT_DATA, else %LOCALAPPDATA%\Hunt on Windows, the
-/// folder Hunt runs in on a Mac.
+/// Hunt.app, when Hunt runs from one: the bundle.
+pub fn app_bundle() -> Option<PathBuf> {
+    let exe = env::current_exe().ok()?;
+    let bundle = exe.parent()?.parent()?.parent()?;
+    (bundle.extension().is_some_and(|e| e == "app")).then(|| bundle.to_path_buf())
+}
+
+/// What a computer keeps: HUNT_DATA, else %LOCALAPPDATA%\Hunt on Windows. On a
+/// Mac, Hunt.app keeps it in ~/Library/Application Support/Hunt, or the folder
+/// named in its data-dir file there (make-mac-app.sh points it at the
+/// repository's folder); from Terminal, the folder Hunt runs in.
 pub fn data_dir() -> PathBuf {
     let data = env::var_os("HUNT_DATA").map(PathBuf::from).unwrap_or_else(|| {
         if cfg!(windows) {
             PathBuf::from(env::var_os("LOCALAPPDATA").unwrap_or_default()).join("Hunt")
+        } else if app_bundle().is_some() {
+            let support = PathBuf::from(env::var_os("HOME").unwrap_or_default()).join("Library/Application Support/Hunt");
+            fs::read_to_string(support.join("data-dir")).ok()
+                .map(|p| PathBuf::from(p.trim()))
+                .filter(|p| p.is_dir())
+                .unwrap_or(support)
         } else {
             env::current_dir().unwrap_or_default()
         }

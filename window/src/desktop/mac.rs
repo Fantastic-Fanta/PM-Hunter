@@ -55,6 +55,19 @@ extern "C" {
     fn CGEventSetFlags(event: Ref, flags: u64);
     fn CGEventPost(tap: u32, event: Ref);
     fn CGEventSourceKeyState(state: i32, key: u16) -> bool;
+    fn CGPreflightScreenCaptureAccess() -> bool;
+    fn CGRequestScreenCaptureAccess() -> bool;
+}
+
+#[link(name = "ApplicationServices", kind = "framework")]
+extern "C" {
+    fn AXIsProcessTrustedWithOptions(options: Ref) -> bool;
+}
+
+#[link(name = "IOKit", kind = "framework")]
+extern "C" {
+    fn IOHIDCheckAccess(request: u32) -> u32;
+    fn IOHIDRequestAccess(request: u32) -> bool;
 }
 
 #[link(name = "CoreFoundation", kind = "framework")]
@@ -88,7 +101,25 @@ pub fn set_own_window(id: u32) {
     OWN_WINDOW.store(id, Ordering::Relaxed);
 }
 
-pub fn init() {}
+/// Hunt as an app (Hunt.app) asks for what it needs the first time: Screen
+/// Recording, Accessibility (clicks), Input Monitoring (Ctrl+Shift+H). From
+/// Terminal, Terminal's are used and nothing's asked.
+pub fn init() {
+    use core_foundation::base::TCFType;
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::dictionary::CFDictionary;
+    use core_foundation::string::CFString;
+    unsafe {
+        if !CGPreflightScreenCaptureAccess() {
+            CGRequestScreenCaptureAccess();
+        }
+        let prompt = CFDictionary::from_CFType_pairs(&[(CFString::new("AXTrustedCheckOptionPrompt"), CFBoolean::true_value())]);
+        AXIsProcessTrustedWithOptions(prompt.as_concrete_TypeRef() as Ref);
+        if IOHIDCheckAccess(1) != 0 {
+            IOHIDRequestAccess(1); // listening to the keyboard
+        }
+    }
+}
 
 fn bounds() -> CGRect {
     unsafe { CGDisplayBounds(CGMainDisplayID()) }
@@ -342,8 +373,9 @@ pub fn roblox_in_front() -> bool {
         .is_some_and(|(_, _, _, owner)| owner.to_lowercase().contains("roblox"))
 }
 
+/// (open -a: no Automation permission to ask for, as osascript's "activate" needs from an app)
 pub fn focus_roblox() {
-    let _ = std::process::Command::new("osascript").args(["-e", "tell application \"Roblox\" to activate"]).output();
+    let _ = std::process::Command::new("open").args(["-a", "Roblox"]).output();
 }
 
 /// [(text, center x, center y)], x and y fractions of the picture, by Vision.

@@ -25,7 +25,8 @@ echo "built $name"
 out=$(mktemp -d)
 printf '{"versionCode": %s, "versionName": "%s", "apk": "%s"}\n' $code "$name" $FILE > $out/version.json
 ssh -i ~/.ssh/clodsire_vps $SERVER "cat $SITE/windows.json 2>/dev/null" > $out/windows.json || true
-python3 ../site/fill_page.py $out/version.json $out/windows.json > $out/index.html
+ssh -i ~/.ssh/clodsire_vps $SERVER "cat $SITE/mac.json 2>/dev/null" > $out/mac.json || true
+python3 ../site/fill_page.py $out/version.json $out/windows.json $out/mac.json > $out/index.html
 # the APK first, version.json last: no phone sees a version before its APK is there
 scp -q -i ~/.ssh/clodsire_vps $apk $SERVER:$SITE/$FILE.new
 ssh -i ~/.ssh/clodsire_vps $SERVER "mv $SITE/$FILE.new $SITE/$FILE"

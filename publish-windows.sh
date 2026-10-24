@@ -49,7 +49,8 @@ echo "built $name: ~/Downloads/$FILE ($(du -h $out/$FILE | cut -f1))"
 sha=$(shasum -a 256 $out/$FILE | cut -d' ' -f1)
 printf '{"version": %s, "name": "%s", "file": "%s", "sha256": "%s"}\n' $code "$name" $FILE $sha > $out/windows.json
 ssh -i $KEY $SERVER "cat $SITE/version.json" > $out/version.json
-python3 site/fill_page.py $out/version.json $out/windows.json > $out/index.html
+ssh -i $KEY $SERVER "cat $SITE/mac.json 2>/dev/null" > $out/mac.json || true
+python3 site/fill_page.py $out/version.json $out/windows.json $out/mac.json > $out/index.html
 # the installer first, windows.json last: no PC sees a version before its installer is there
 scp -q -i $KEY $out/$FILE $SERVER:$SITE/$FILE.new
 ssh -i $KEY $SERVER "mv $SITE/$FILE.new $SITE/$FILE"

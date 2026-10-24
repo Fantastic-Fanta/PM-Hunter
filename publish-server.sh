@@ -44,8 +44,9 @@ ssh_ "set -e
 got=$(mktemp -d)
 ssh_ "cat $BASE/public/version.json" > $got/version.json
 ssh_ "cat $BASE/public/windows.json 2>/dev/null" > $got/windows.json || true
+ssh_ "cat $BASE/public/mac.json 2>/dev/null" > $got/mac.json || true
 page=$got/index.html
-python3 site/fill_page.py $got/version.json $got/windows.json > $page
+python3 site/fill_page.py $got/version.json $got/windows.json $got/mac.json > $page
 scp -q -i $KEY $page $SERVER:$BASE/public/index.html
 ssh_ "chown poopihunt:poopihunt $BASE/public/index.html && chmod 644 $BASE/public/index.html"
 echo "published on https://poopihunt.xyz/app"
