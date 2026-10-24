@@ -75,6 +75,7 @@ const ON_SCREEN_ONLY: u32 = 1;
 const ON_SCREEN_BELOW_WINDOW: u32 = 4;
 const EXCLUDE_DESKTOP: u32 = 16;
 const HID_TAP: u32 = 0;
+const COMBINED_STATE: i32 = 0;
 const HID_STATE: i32 = 1; // the keyboard itself: not the hunter's own keys
 const MOUSE_MOVED: u32 = 5;
 const SHIFT: u64 = 0x0002_0000;
@@ -288,14 +289,17 @@ pub fn type_text(text: &str) {
 }
 
 pub fn keys() -> Keys {
-    let down = |k: u16| unsafe { CGEventSourceKeyState(HID_STATE, k) };
+    // the hotkeys as the session has them (the hunter never presses Ctrl+Shift itself);
+    // "any" from the keyboard alone, so its own typing isn't you coming back
+    let down = |k: u16| unsafe { CGEventSourceKeyState(COMBINED_STATE, k) || CGEventSourceKeyState(HID_STATE, k) };
+    let hid = |k: u16| unsafe { CGEventSourceKeyState(HID_STATE, k) };
     Keys {
         ctrl: down(59) || down(62),
         shift: down(56) || down(60),
         h: down(4),
         n: down(45),
         l: down(37),
-        any: (0..128).any(down),
+        any: (0..128).any(hid),
     }
 }
 

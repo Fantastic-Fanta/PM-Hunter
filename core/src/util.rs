@@ -6,9 +6,10 @@ use std::time::{Duration, Instant};
 
 static START: LazyLock<Instant> = LazyLock::new(Instant::now);
 
-/// Seconds, steadily counting (since the program started).
+/// Seconds, steadily counting: from a million when the program starts, so a time
+/// of 0 ("never": not saved yet, nothing clicked yet) is always long ago.
 pub fn now() -> f64 {
-    START.elapsed().as_secs_f64()
+    1_000_000.0 + START.elapsed().as_secs_f64()
 }
 
 pub fn sleep(seconds: f64) {
@@ -57,4 +58,13 @@ pub fn lower_first(s: &str) -> String {
 /// At most n characters.
 pub fn clip(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn never_is_long_ago() {
+        // a save "due since never" (0) is due at once, the first minutes too
+        assert!(super::now() - 0.0 > 125.0);
+    }
 }
