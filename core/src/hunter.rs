@@ -717,6 +717,15 @@ impl Hunt {
     pub(crate) fn read_enemy(&mut self, f: &Frame, lay: &Layout) -> Enc {
         let texts = self.ocr(f, Some(lay.boxed(layout::BOX)), Self::zoom(lay));
         let mut enc = reader::enemy(&texts);
+        if enc.species.is_empty() {
+            // the box made bigger read without the name (Windows, a Coal Entei's light italic
+            // "Entei": every read nameless, none agreed, it was waited on): as it is, then
+            let plain = reader::enemy(&self.ocr(f, Some(lay.boxed(layout::BOX)), 1.0));
+            enc.species = plain.species;
+            if enc.level.is_empty() {
+                enc.level = plain.level;
+            }
+        }
         if self.traits.ocr_rows {
             // Windows' text recognition misses these two in the whole box: each is read on its own
             let r = self.row_text(f, lay, layout::RESKIN_ROW, &["x2", "far"]);
@@ -880,7 +889,7 @@ impl Hunt {
                 if menu && !chat {
                     // what the text recognition saw there, and how it was read: to tell why from
                     // the log (sent with the trouble), not by trying the picture on a build
-                    let texts = self.ocr(&f, Some(lay.boxed(layout::BOX)), 1.0);
+                    let texts = self.ocr(&f, Some(lay.boxed(layout::BOX)), Self::zoom(&lay)); // (as read_enemy reads it)
                     let tried: Vec<String> = reads.iter().rev().take(3).map(|e| e.describe()).collect();
                     self.say(&format!("  (the box{}: {}; read as: {})",
                                       if readable { "" } else { ", not quite in sight" },

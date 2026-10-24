@@ -104,6 +104,9 @@ pub fn enemy(texts: &[TextHit]) -> Enc {
             enc.level = m[1].to_string();
         } else if hit.y < hp && hit.x < 0.6 {
             enc.species = join(&enc.species, &clean_name(&text));
+            if let (true, Some(m)) = (enc.level.is_empty(), LEVEL_ANY.captures(&text)) {
+                enc.level = m[1].to_string(); // the name and the level read as one line ("Entei Lv. 20")
+            }
         } else if !two_letters(&text) {
             continue; // an icon read as text ("*" for the shiny star)
         } else if hp <= hit.y && hit.y < end {
@@ -357,6 +360,15 @@ mod tests {
 
     fn hit(t: &str, x: f64, y: f64) -> TextHit {
         TextHit::new(t, x, y)
+    }
+
+    #[test]
+    fn name_and_level_as_one_line() {
+        // Windows, on a Coal Entei's box made bigger: the name and the level as one text
+        let e = enemy(&[hit("Entei Lv. 20", 0.4, 0.21), hit("COAL", 0.67, 0.66)]);
+        assert_eq!((e.species.as_str(), e.level.as_str(), e.reskin.as_str()), ("Entei", "20", "COAL"));
+        let e = enemy(&[hit("Entei", 0.15, 0.21), hit("Lv. 20", 0.81, 0.21)]);
+        assert_eq!((e.species.as_str(), e.level.as_str()), ("Entei", "20"));
     }
 
     #[test]
