@@ -305,6 +305,7 @@ struct Hunt {
     settling: Option<(Instant, f32, f32)>, // the bar going back into play: since, how far it was, how much was up
     carried: Option<Value>, // the hunt as it was, stopped for an update: the new Hunt carries on with it
     count_from: u32, // the next hunter's first count (an update's, carried on)
+    carrying: bool, // the next hunter hunts on from before an update
     checked_at: u32, // encounters at the last look for an update
     closed: bool,           // the closing's done: the window may go
     lifted: Option<Instant>, // being dragged, since
@@ -390,6 +391,7 @@ impl Hunt {
             settling: None,
             carried,
             count_from: 0,
+            carrying: false,
             checked_at: 0,
             closed: false,
             lifted: None,
@@ -435,6 +437,7 @@ impl Hunt {
         let launch = engine::Launch {
             mode, paused, window: true, practice: 0, calibrate: false, reports: self.reports, config: &self.paths.config,
             count: std::mem::take(&mut self.count_from),
+            carried: std::mem::take(&mut self.carrying),
         };
         let control = match engine::launch(launch, sink, move || {
             let _ = tx.send(Msg::Ended(id));
@@ -1400,6 +1403,7 @@ impl eframe::App for Hunt {
                         .unwrap_or(Self::hunt_mode()).to_string();
                     self.test = was["test"].as_bool().unwrap_or(false);
                     self.count_from = was["count"].as_u64().unwrap_or(0) as u32;
+                    self.carrying = was["hunting"].as_bool().unwrap_or(false);
                     self.checked_at = self.count_from;
                     self.start(&mode, !was["hunting"].as_bool().unwrap_or(false));
                 }

@@ -68,6 +68,9 @@ pub struct Options {
     pub times: bool,
     /// Encounters so far: a hunt carried on from before an update.
     pub count: u32,
+    /// A hunt going on from before an update: a battle on screen when it starts is just
+    /// its next encounter (the update takes a few seconds), not yours to play.
+    pub carried: bool,
 }
 
 /// What the website shows of the hunt.
@@ -1161,7 +1164,7 @@ impl Hunt {
         }
         // started in the middle of a battle: that one's yours (the hunter would act on it at once).
         // A phone's first pictures can be black for a few seconds: wait for real ones, then 2 s.
-        if c.running() && !watch {
+        if c.running() && !watch && !c.opts.carried {
             let until = now() + if self.traits.phone { 10.0 } else { 0.0 };
             let mut lit: Option<f64> = None;
             loop {
