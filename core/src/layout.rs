@@ -33,6 +33,7 @@ pub const AFK_SPOT: Pt = Pt::new(150.0, 800.0); // black margin left of the game
 pub const CHAT_MARGIN: IBox = IBox::new(80, 140, 270, 560); // black margin where chat lines start
 pub const CHAT_BUTTON: Pt = Pt::new(185.0, 82.0); // Roblox's chat bubble, top left, if chat_button can't see it
 pub const IDLE_SPOT: Pt = Pt::new(1550.0, 960.0); // empty right end of the "What should ... do?" box
+pub const NAME_ROW: IBox = IBox::new(BOX.l + 15, BOX.t + 15, BOX.l + 320, BOX.t + 90); // "Mew", left of the level
 pub const RESKIN_ROW: IBox = IBox::new(BOX.l + 40, HP_BAR_END, BOX.r - 20, BOX_END); // INFERNO, under the HP bar
 pub const GRADIENT_TAB: IBox = IBox::new(BOX.l + 60, BOX_END, BOX.r - 60, BOX.b); // Mirage, in many colors
 

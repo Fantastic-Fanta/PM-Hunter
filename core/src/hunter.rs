@@ -726,6 +726,11 @@ impl Hunt {
                 enc.level = plain.level;
             }
         }
+        if enc.species.is_empty() {
+            // a short name missed both ways ("Mew": Windows reads only "Lv. 18" in its box): its
+            // row on its own, made bigger, its ink apart from the box's gray
+            enc.species = reader::clean_name(&self.row_text(f, lay, layout::NAME_ROW, &["x2", "far"]));
+        }
         if self.traits.ocr_rows {
             // Windows' text recognition misses these two in the whole box: each is read on its own
             let r = self.row_text(f, lay, layout::RESKIN_ROW, &["x2", "far"]);
@@ -816,6 +821,7 @@ impl Hunt {
     pub(crate) fn read_encounter(&mut self, hint: IBox, clicks: bool, mut draw: bool) -> R<Option<Read>> {
         let mut hint = hint;
         let (mut reads, mut gone, start, mut saved): (Vec<Enc>, Option<f64>, f64, bool) = (Vec::new(), None, now(), false);
+        let mut nameless: Option<f64> = None; // since when the reads have had no name
         let (mut chat_click, mut chat_clicks, mut cal_at) = (0.0, 0, 0.0);
         loop {
             let (f, lay) = self.look(Some(hint));
@@ -881,6 +887,20 @@ impl Hunt {
                 }
                 if let Some(enc) = got {
                     return Ok(Some(Read { enc, f, lay }));
+                }
+                // a name that never reads (missed every way, every time) doesn't hold it up: after
+                // a few seconds the rest decides (a reskin and a gradient is the bar for any
+                // Pokemon; anything a rule might name is held for you)
+                if reads.last().is_some_and(|r| r.species.is_empty()) {
+                    let since = *nameless.get_or_insert(now());
+                    if now() - since > 4.0 {
+                        if let Some(enc) = rules::settled_nameless(&reads) {
+                            self.say(&format!("  (the name won't read: going by the rest, {})", enc.describe()));
+                            return Ok(Some(Read { enc, f, lay }));
+                        }
+                    }
+                } else {
+                    nameless = None;
                 }
             }
             if now() - start > 15.0 && !saved {
@@ -1279,8 +1299,16 @@ impl Hunt {
                 c.web.lock().unwrap().encounters += 1;
                 (last_enc, quiet_said) = (now(), false);
             }
-            let rule = wanted(&enc, &c.cfg.targets).cloned();
+            let mut rule = wanted(&enc, &c.cfg.targets).cloned();
             let catch_it = wanted(&enc, &self.notify).is_some();
+            let special = enc.shiny || !enc.reskin.is_empty() || !enc.gradient.is_empty();
+            if enc.species.is_empty() && rule.is_none() && !catch_it && special
+                && (rules::might_want(&enc, &c.cfg.targets) || rules::might_want(&enc, &self.notify))
+            {
+                // its name never read, and a rule naming a species might want it: held for you, not run from
+                self.say("  (its name won't read, and a rule might want it: held for you)");
+                rule = Some(serde_json::json!({"species": "?"}).as_object().unwrap().clone());
+            }
             c.out.reset_say();
             {
                 let mut web = c.web.lock().unwrap();

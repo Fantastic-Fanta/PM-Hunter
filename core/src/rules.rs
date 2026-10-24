@@ -220,6 +220,35 @@ pub fn wanted<'a>(enc: &Enc, rules: &'a [Rule]) -> Option<&'a Rule> {
     rules.iter().find(|r| rule_ok(r, enc))
 }
 
+/// For an encounter whose name never read: a rule naming a species that it matches in
+/// everything else (it might be the one).
+pub fn might_want(enc: &Enc, rules: &[Rule]) -> bool {
+    rules.iter().any(|r| r.contains_key("species")
+        && r.iter().all(|(k, v)| k == "species" || k == "not_species" || field_ok(v, &enc.get(k))))
+}
+
+/// The reads agree on everything but a name that never comes (the text recognition
+/// misses some names every time: "Mew"): the last three, nameless, the same.
+pub fn settled_nameless(reads: &[Enc]) -> Option<Enc> {
+    if reads.len() < 3 {
+        return None;
+    }
+    let last3 = &reads[reads.len() - 3..];
+    let l = &last3[2];
+    let same = last3.iter().all(|r| r.species.is_empty() && r.reskin == l.reskin && r.gradient == l.gradient
+        && r.status == l.status && (r.level == l.level || r.level.is_empty() || l.level.is_empty()));
+    if !same || (l.level.is_empty() && l.reskin.is_empty() && l.gradient.is_empty()) {
+        return None; // (nothing read at all: not a box)
+    }
+    let mut enc = l.clone();
+    if enc.level.is_empty() {
+        enc.level = last3.iter().map(|r| r.level.clone()).find(|v| !v.is_empty()).unwrap_or_default();
+    }
+    enc.shiny = last3.iter().any(|r| r.shiny);
+    enc.tint = last3.iter().any(|r| r.tint);
+    Some(enc)
+}
+
 /// "species=Tympole, shiny=true"
 pub fn show(rule: &Rule) -> String {
     rule.iter()
@@ -369,6 +398,22 @@ mod tests {
         assert_eq!(settled(&[l.clone(), e.clone()]).unwrap().level, "18");
         assert_eq!(settled(&[e.clone(), l.clone(), e.clone()]).unwrap().level, "18");
         assert_eq!(settled(&[e.clone(), e]).unwrap().level, "");
+    }
+
+    #[test]
+    fn nameless() {
+        let mut e = enc("");
+        e.reskin = "TOXIC FLUID".into();
+        e.level = "18".into();
+        assert!(settled_nameless(&[e.clone(), e.clone()]).is_none());
+        assert_eq!(settled_nameless(&[e.clone(), e.clone(), e.clone()]).unwrap().reskin, "TOXIC FLUID");
+        assert!(settled_nameless(&[enc(""), enc(""), enc("")]).is_none()); // nothing read: not a box
+        // a rule naming a species might want a nameless reskin, not a plain one
+        let rule: Rule = json!({"species": "Suicune", "reskin": "Doodle"}).as_object().unwrap().clone();
+        let mut d = enc("");
+        d.reskin = "DOODLE".into();
+        assert!(might_want(&d, &[rule.clone()]));
+        assert!(!might_want(&e, &[rule]));
     }
 
     #[test]
