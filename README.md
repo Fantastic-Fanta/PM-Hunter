@@ -39,6 +39,17 @@ All of it is Rust, one Cargo workspace:
 
 ## Mac
 
+**Hunt.app**: `./make-mac-app.sh` builds it in this folder (Clodsire's icon,
+signed with this Mac's Apple Development certificate so macOS keeps its Screen
+Recording, Accessibility and Input Monitoring permissions; what it saves stays
+in this folder). It updates itself from https://poopihunt.xyz/mac.json when it
+opens and whenever a hunt stops. `./publish-mac.sh` publishes a build for any
+Mac (Apple silicon and Intel): `Hunt-mac.zip`, `mac.json` and the download
+page, which shows each browser its own system's download. On another Mac it
+keeps what it saves in ~/Library/Application Support/Hunt; the first time,
+macOS says it can't check the app: System Settings > Privacy & Security >
+**Open Anyway**.
+
 Double-click `Poopihunt.command` for Poopihunt's window (the pill, as on Windows; it
 builds Hunt the first time, which needs Rust: `brew install rust`), or
 `pokehunt.command` for the hunter in Terminal alone. Ctrl+Shift+H pauses and
