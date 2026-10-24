@@ -1,6 +1,10 @@
 package com.pokehunt
 
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.pm.PackageInstaller
+import android.os.Build
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
@@ -12,7 +16,7 @@ import java.net.URL
 
 /** Updates from the web: version.json next to the APK says which build is the
  *  newest, {"versionCode": 878152, "versionName": "22 Oct 13:12", "apk": "Hunt.apk"}.
- *  Android asks before installing; apps can't update themselves silently. */
+ *  Looked for when the hunt stops (HuntService), installed on its own. */
 object Updater {
     const val URL = "https://poopihunt.xyz/version.json"  // hunt.stingray-digital.online serves the same, for older builds
 
@@ -36,8 +40,9 @@ object Updater {
         null  // offline, or nothing published: no update
     }
 
-    /** Downloads it (not on the main thread), then opens Android's installer.
-     *  The first time, Android sends you to allow installing from Hunt. */
+    /** Downloads it and installs it (not on the main thread), on its own: Android
+     *  updates an app it installed itself without asking (12+), so only the first
+     *  update from the website may show Android's confirm screen. progress: 0 to 100. */
     fun install(ctx: Context, update: Update, progress: (Int) -> Unit) {
         val file = File(ctx.cacheDir, "update.apk")
         val c = URL(update.apk).openConnection() as HttpURLConnection
@@ -58,13 +63,33 @@ object Updater {
             }
         }
         c.disconnect()
-        if (!ctx.packageManager.canRequestPackageInstalls()) {
-            ctx.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${ctx.packageName}"))
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            return  // tapping Update again installs it
+        val installer = ctx.packageManager.packageInstaller
+        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
+            setAppPackageName(ctx.packageName)
+            if (Build.VERSION.SDK_INT >= 31) setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
         }
-        val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.files", file)
-        ctx.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
-            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK))
+        val id = installer.createSession(params)
+        installer.openSession(id).use { session ->
+            session.openWrite("hunt.apk", 0, file.length()).use { out -> file.inputStream().use { it.copyTo(out) } }
+            val done = PendingIntent.getBroadcast(ctx, id, Intent(ctx, UpdateDone::class.java),
+                PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            session.commit(done.intentSender)  // the app's replaced and started again from here
+        }
+    }
+}
+
+/** Android's word on an install: if it wants you to confirm (the first time, or before
+ *  Android 12), its screen comes up. */
+class UpdateDone : BroadcastReceiver() {
+    override fun onReceive(ctx: Context, intent: Intent) {
+        when (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
+            PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                @Suppress("DEPRECATION")
+                val confirm = intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT) ?: return
+                ctx.startActivity(confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
+            PackageInstaller.STATUS_SUCCESS -> Log.print("  (updated)")
+            else -> Log.print("  (the update didn't install: ${intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)})")
+        }
     }
 }

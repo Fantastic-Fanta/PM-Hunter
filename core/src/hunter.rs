@@ -651,15 +651,11 @@ impl Hunt {
         self.use_calibration(&f);
         let mute = self.find_mute(&f, hint);
         if self.traits.phone {
-            // the ON / OFF button goes under Mute once the battle screen has settled (while it
-            // slides in, Mute is higher up: a button put under it then ends up covering it)
-            if let Some(m) = mute.filter(|m| menu_ready(&f, &Layout::new(*m, &self.cal))) {
-                self.dev.place_overlay(m);
-            } else if let (None, Some(h)) = (mute, hint) {
-                // covering Mute anyway: well out of the way, two Mute heights lower
-                let lower = IBox::new(h.l, h.t, h.r, h.b + 2 * h.h());
-                if self.dev.overlay().is_some_and(|b| b.overlaps(&lower)) {
-                    self.dev.place_overlay(lower);
+            // the pill parks right after Roblox's menu and chat buttons (top left: nothing read
+            // there), once the battle screen has settled
+            if mute.is_some_and(|m| menu_ready(&f, &Layout::new(m, &self.cal))) {
+                if let Some(p) = vision::roblox_pill(&f) {
+                    self.dev.place_overlay(p);
                 }
             }
         }

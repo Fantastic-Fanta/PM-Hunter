@@ -76,7 +76,7 @@ pub trait Device: Send + Sync {
     }
 
     /// The battle's Mute button is at mute: the ON / OFF button goes under it.
-    fn place_overlay(&self, _mute: IBox) {}
+    fn place_overlay(&self, _after: IBox) {}
 
     /// s since you last pressed a key or touched the screen (yourself, not the
     /// hunter), if that's known.

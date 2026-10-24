@@ -28,20 +28,40 @@ import android.widget.Toast
 import java.io.File
 
 /** Setting up, and nothing else: what Poopihunt needs allowed, each a row that opens
- *  where it's allowed, then Open Roblox. The hunt itself is the pill floating over
- *  Roblox (HuntService). An update shows here when there's one. */
+ *  where it's allowed, the Discord webhook, then Open Roblox. The hunt itself is the
+ *  pill floating over Roblox (HuntService), which also keeps it up to date. */
 class MainActivity : Activity() {
     private val ui = Handler(Looper.getMainLooper())
     private val CAPTURE = 7
-    private var update: Updater.Update? = null
-    private var downloading: Int? = null
-    private var checkedAt = 0L
 
     private val INK = Color.WHITE
     private val DIM = Color.rgb(0x84, 0x84, 0x84)
     private val BOXED = Color.rgb(0x1d, 0x1d, 0x1d)
 
     private lateinit var rows: LinearLayout
+    private val hookRow by lazy {
+        android.widget.EditText(this).apply {
+            typeface = resources.getFont(R.font.inter_regular)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setTextColor(INK)
+            setHintTextColor(DIM)
+            hint = "Discord webhook (for finds)"
+            isSingleLine = true
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
+            background = GradientDrawable().apply { setColor(BOXED); cornerRadius = dp(28).toFloat() }
+            setPadding(dp(22), dp(16), dp(22), dp(16))
+            setText(Hunt.webhook(this@MainActivity))
+            setOnEditorActionListener { v, _, _ ->
+                val said = Hunt.saveWebhook(this@MainActivity, v.text.toString().trim())
+                if (said != null) Toast.makeText(this@MainActivity, said, Toast.LENGTH_SHORT).show()
+                if (said == "Not a Discord webhook") setText(Hunt.webhook(this@MainActivity))
+                clearFocus()
+                getSystemService(android.view.inputmethod.InputMethodManager::class.java).hideSoftInputFromWindow(windowToken, 0)
+                true
+            }
+        }
+    }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -77,7 +97,16 @@ class MainActivity : Activity() {
         Log.file = File(filesDir, "hunt.log")
         val title = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
-            addView(ImageView(this@MainActivity).apply { setImageResource(R.mipmap.ic_launcher) },
+            addView(ImageView(this@MainActivity).apply {
+                setImageResource(R.mipmap.ic_launcher)
+                // a rounded square, as an app's icon
+                outlineProvider = object : android.view.ViewOutlineProvider() {
+                    override fun getOutline(v: View, o: android.graphics.Outline) =
+                        o.setRoundRect(0, 0, v.width, v.height, v.width * 0.22f)
+                }
+                clipToOutline = true
+                scaleType = ImageView.ScaleType.CENTER_CROP
+            },
                     LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginEnd = dp(14) })
             addView(words("Poopihunt", 26f, INK, true))
         }
@@ -144,6 +173,7 @@ class MainActivity : Activity() {
     }
 
     private fun show() {
+        if (hookRow.hasFocus()) return  // (being typed in)
         rows.removeAllViews()
         val gap = { rows.addView(View(this), LinearLayout.LayoutParams(1, dp(12))) }
         rows.addView(row("Accessibility", HuntService.instance != null, "Turn on",
@@ -164,11 +194,13 @@ class MainActivity : Activity() {
             rows.addView(row("Screen capture", CaptureService.instance != null, "Allow",
                              "This phone's screenshots come out blank without it") { askCapture() })
         }
-        update?.let { u ->
-            gap()
-            val said = downloading?.let { "Downloading $it%" } ?: "Install"
-            rows.addView(row("Update to ${u.name}", false, said) { install() })
-        }
+        gap()
+        rows.addView(row("Install updates", packageManager.canRequestPackageInstalls(), "Allow",
+                         "So it keeps itself up to date") {
+            startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, android.net.Uri.parse("package:$packageName")))
+        })
+        gap()
+        rows.addView(hookRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         rows.addView(View(this), LinearLayout.LayoutParams(1, dp(28)))
         rows.addView(words("Open Roblox", 17f, Color.BLACK, true).apply {
             gravity = Gravity.CENTER
@@ -212,37 +244,9 @@ class MainActivity : Activity() {
         })
     }
 
-    private fun checkForUpdate() {
-        if (System.currentTimeMillis() - checkedAt < 10 * 60 * 1000) return
-        checkedAt = System.currentTimeMillis()
-        Thread {
-            val u = Updater.check(this) ?: return@Thread
-            runOnUiThread {
-                update = u
-                show()
-            }
-        }.start()
-    }
-
-    private fun install() {
-        val u = update ?: return
-        if (downloading != null) return
-        if (Hunt.running) Hunt.stop()
-        downloading = 0
-        Thread {
-            try {
-                Updater.install(this, u) { p -> runOnUiThread { downloading = p; show() } }
-            } catch (e: Exception) {
-                runOnUiThread { Toast.makeText(this, "The download didn't come through: tap to try again", Toast.LENGTH_LONG).show() }
-            }
-            runOnUiThread { downloading = null; show() }
-        }.start()
-    }
-
     override fun onResume() {
         super.onResume()
         refresh.run()
-        checkForUpdate()
     }
 
     override fun onPause() {

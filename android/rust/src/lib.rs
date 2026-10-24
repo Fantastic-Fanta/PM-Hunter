@@ -68,8 +68,8 @@ pub trait Phone: Send + Sync {
     fn focus_roblox(&self);
     /// Where the ON / OFF button is on the screenshots, to not read it as the game's.
     fn button_box(&self) -> Option<Rect>;
-    /// The battle's Mute button is at mute (screenshot px): the ON / OFF button goes under it.
-    fn place_button(&self, mute: Rect);
+    /// Roblox's menu and chat buttons are at after (screenshot px): the pill goes right after them.
+    fn place_button(&self, after: Rect);
     /// Seconds since you last touched the screen yourself, if you have.
     fn idle(&self) -> Option<f64>;
     /// The text in a picture: words far apart on a row as texts of their own.
@@ -153,8 +153,8 @@ impl Device for OnPhone {
         self.0.button_box().map(|r| IBox::new(r.l, r.t, r.r, r.b))
     }
 
-    fn place_overlay(&self, mute: IBox) {
-        self.0.place_button(Rect { l: mute.l, t: mute.t, r: mute.r, b: mute.b });
+    fn place_overlay(&self, after: IBox) {
+        self.0.place_button(Rect { l: after.l, t: after.t, r: after.r, b: after.b });
     }
 
     fn idle(&self) -> Option<f64> {

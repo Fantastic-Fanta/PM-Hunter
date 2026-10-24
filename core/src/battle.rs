@@ -277,6 +277,28 @@ impl Hunt {
                     if let Some(hit) = texts.iter().find(|t| reader::is_target(target, &t.text)).map(|t| t.pt()) {
                         self.trace(&format!("bag: {item} on {target}"));
                         self.click(hit)?;
+                        if in_battle {
+                            // on a Pokemon that doesn't need it (its HP misread): "It won't have any
+                            // effect.", and the party screen stays: its Close, back to the battle
+                            let end = now() + 2.5;
+                            while now() < end {
+                                self.nap(0.3)?;
+                                let f = self.grab();
+                                let texts = self.screen_texts(&f);
+                                if texts.iter().any(|t| t.text.to_lowercase().contains("any effect")) {
+                                    self.trace(&format!("bag: the {item} won't have any effect: Close"));
+                                    if let Some(c) = texts.iter().find(|t| t.is("close")) {
+                                        self.click(c.pt())?;
+                                    }
+                                    self.nap(0.8)?;
+                                    break;
+                                }
+                                if !texts.iter().any(|t| t.text.to_lowercase().starts_with("pokemon party")
+                                                     || t.text.to_lowercase().starts_with("choose a pokemon")) {
+                                    break; // the party screen's gone: it was used
+                                }
+                            }
+                        }
                         return Ok(Some(item));
                     }
                 }
@@ -522,7 +544,11 @@ impl Hunt {
             if turns == 0 && (park.is_some() || !first.is_empty()) {
                 // unless a Park Ball is favorited
                 ball = Some(if !first.is_empty() { first.clone() } else { or_new(cfg.str("awake_ball")) });
-            } else if hp.is_some_and(|h| h < cfg.catch.get("heal_below").and_then(Value::as_f64).unwrap_or(0.4)) && heals < 5 {
+            } else if hp.is_some_and(|h| h < cfg.catch.get("heal_below").and_then(Value::as_f64).unwrap_or(0.4)) && heals < 5
+                // read twice: one misread of "367/367" shouldn't spend a Full Restore
+                && { let again = self.grab(); self.own_hp(&again, &lay) }
+                    .is_some_and(|h| h < cfg.catch.get("heal_below").and_then(Value::as_f64).unwrap_or(0.4))
+            {
                 let item = cfg.str("heal_item");
                 self.trace(&format!("low HP: {item}"));
                 if self.use_item(&lay, "Recovers", &item, Some(&lead), None, true)?.is_none() {

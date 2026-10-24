@@ -88,6 +88,33 @@ class HuntService : AccessibilityService(), Phone {
             NotificationChannel("website", "Website logins", NotificationManager.IMPORTANCE_HIGH))
         robloxShown = rootInActiveWindow?.packageName == ROBLOX
         updateButton()
+        lookForUpdate()
+    }
+
+    @Volatile private var updating = false
+
+    /** A newer build on the website (when Poopihunt starts, and whenever a hunt stops or
+     *  pauses): downloaded and installed on its own, the pill a progress bar meanwhile. */
+    private fun lookForUpdate() {
+        if (updating || hunter?.running() == true) return
+        updating = true
+        Thread {
+            try {
+                val u = Updater.check(this)
+                if (u != null) {
+                    Log.print("  (updating to the ${u.name} build)")
+                    main { button?.progress = 0f }
+                    Updater.install(this, u) { p -> main { button?.progress = minOf(p / 100f, 0.99f) } }
+                    main { button?.progress = 1f }
+                    // (installed, the app starts again; if Android wants a tap first, its screen's up)
+                    android.os.Handler(mainLooper).postDelayed({ button?.progress = null }, 30000)
+                }
+            } catch (e: Exception) {
+                Log.print("  (the update didn't come down: ${e.message})")
+                main { button?.progress = null }
+            }
+            updating = false
+        }.start()
     }
 
     override fun typeText(text: String): Boolean = runCatching {
@@ -178,6 +205,7 @@ class HuntService : AccessibilityService(), Phone {
         thread = null
         updateButton()
         Hunt.refreshTile(this)
+        lookForUpdate()
     }
 
     private fun main(f: () -> Unit) = android.os.Handler(mainLooper).post(f)
@@ -228,14 +256,14 @@ class HuntService : AccessibilityService(), Phone {
     }
 
     /** The pill floating over Roblox (as the desktop's): play / stop, a long press a
-     *  debug run, the website's code, the webhook; dragged by the rest of it out of the
+     *  debug run, the website's code; dragged by the rest of it out of the
      *  way. It also hears every touch outside itself, which is how the hunter notices
      *  you're back. */
     private fun showButton() {
         if (button != null) return
         val wm = getSystemService(WindowManager::class.java)
         val dp = resources.displayMetrics.density
-        val spot = Hunt.prefs(this)  // under the Mute button, where the last battle had it
+        val spot = Hunt.prefs(this)  // after Roblox's buttons, where the last battle had them
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
@@ -245,11 +273,11 @@ class HuntService : AccessibilityService(), Phone {
             PixelFormat.TRANSLUCENT).apply {
             // screen coordinates, the same as the screenshots'
             layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-            // at first the margin right of the game; the left margin is where
-            // chat lines are looked for
-            gravity = Gravity.TOP or Gravity.END
-            x = spot.getInt("button_x", (20 * dp).roundToInt())
-            y = spot.getInt("button_y", resources.displayMetrics.heightPixels / 5)
+            // right after Roblox's menu and chat buttons, top left (placeButton finds them),
+            // or where it was dragged to
+            gravity = Gravity.TOP or Gravity.START
+            x = spot.getInt("pill_x", (150 * dp).roundToInt())
+            y = spot.getInt("pill_y", (12 * dp).roundToInt())
         }
         buttonParams = params
         val pill = PillView(this)
@@ -269,27 +297,15 @@ class HuntService : AccessibilityService(), Phone {
                                           else "No connection to poopihunt.xyz", Toast.LENGTH_SHORT).show() }
                 }.start()
             }
-            override fun hook(url: String) {
-                val said = Hunt.saveWebhook(this@HuntService, url) ?: return
-                pill.hook = Hunt.webhook(this@HuntService)
-                pill.showHook(false)
-                Toast.makeText(this@HuntService, said, Toast.LENGTH_SHORT).show()
-            }
-            override fun editing(on: Boolean) {
-                // the window takes the keyboard only while the box is being typed in
-                params.flags = if (on) params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
-                               else params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                if (button != null) wm.updateViewLayout(pill, params)
-            }
             override fun drag(dx: Float, dy: Float, done: Boolean) {
                 if (from == (0 to 0) || (dx == 0f && dy == 0f)) from = params.x to params.y
-                params.x = from.first - dx.toInt()  // x counts from the right edge
+                params.x = from.first + dx.toInt()
                 params.y = from.second + dy.toInt()
                 wm.updateViewLayout(pill, params)
                 if (done) {
                     dragged = true
                     from = 0 to 0
-                    Hunt.prefs(this@HuntService).edit().putInt("button_x", params.x).putInt("button_y", params.y).apply()
+                    Hunt.prefs(this@HuntService).edit().putInt("pill_x", params.x).putInt("pill_y", params.y).apply()
                 }
             }
             override fun outside() {
@@ -301,8 +317,6 @@ class HuntService : AccessibilityService(), Phone {
             }
             override fun ours() = tapping || now() - tappedAt < 0.3
         }
-        pill.hook = Hunt.webhook(this)
-        pill.showHook(false)
         wm.addView(pill, params)
         button = pill
         refreshButton()
@@ -326,6 +340,7 @@ class HuntService : AccessibilityService(), Phone {
     }
 
     @Volatile private var debugNext = false  // a debug run asked for before the hunt was there
+    private var wasOn = false
 
     private var buttonParams: WindowManager.LayoutParams? = null
     @Volatile private var placedUnder: Rect? = null
@@ -334,16 +349,17 @@ class HuntService : AccessibilityService(), Phone {
     override fun label() = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}, " +
         "Android ${android.os.Build.VERSION.RELEASE}"
 
-    override fun placeButton(mute: Rect) {
-        if (dragged || mute == placedUnder) return
-        placedUnder = mute
+    /** Roblox's menu and chat buttons are at after (screenshot px): the pill goes right
+     *  after them, centred on them, unless you've dragged it somewhere. */
+    override fun placeButton(after: Rect) {
+        if (dragged || after == placedUnder) return
+        placedUnder = after
         val dp = resources.displayMetrics.density
         val k = shrink
-        val screen = getSystemService(WindowManager::class.java).maximumWindowMetrics.bounds
-        // its right edge a little in from Mute's, just below it
-        val x = (screen.width() - mute.r * k + 8 * dp).roundToInt()
-        val y = (mute.b * k + 8 * dp).roundToInt()
-        Hunt.prefs(this).edit().putInt("button_x", x).putInt("button_y", y).apply()
+        val pillH = 40 * dp
+        val x = (after.r * k + 10 * dp).roundToInt()
+        val y = ((after.t + after.b) / 2.0 * k - pillH / 2).roundToInt()
+        Hunt.prefs(this).edit().putInt("pill_x", x).putInt("pill_y", y).apply()
         main {
             val p = buttonParams
             val b = button
@@ -362,6 +378,9 @@ class HuntService : AccessibilityService(), Phone {
             h.setTest(true)
             debugNext = false
         }
+        val on = h != null && h.running()
+        if (wasOn && !on) lookForUpdate()  // a hunt paused (you, a find, a debug run that went wrong)
+        wasOn = on
         b.state = when {
             starting -> PillView.State.STARTING
             h != null && h.running() -> PillView.State.HUNTING

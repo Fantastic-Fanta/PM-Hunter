@@ -41,8 +41,8 @@ printf '{"version": %s, "name": "%s"}\n' $code "$name" > $app/Contents/Resources
 icons=$(mktemp -d)/Hunt.iconset
 mkdir -p $icons
 for s in 16 32 128 256 512; do
-  sips -z $s $s windows/hunt-icon.png --out $icons/icon_${s}x${s}.png > /dev/null
-  sips -z $((s * 2)) $((s * 2)) windows/hunt-icon.png --out $icons/icon_${s}x${s}@2x.png > /dev/null
+  sips -z $s $s windows/hunt-icon-app.png --out $icons/icon_${s}x${s}.png > /dev/null
+  sips -z $((s * 2)) $((s * 2)) windows/hunt-icon-app.png --out $icons/icon_${s}x${s}@2x.png > /dev/null
 done
 iconutil -c icns $icons -o $app/Contents/Resources/Hunt.icns
 

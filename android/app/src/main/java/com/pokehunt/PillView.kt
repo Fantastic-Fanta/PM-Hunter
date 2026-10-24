@@ -23,9 +23,10 @@ import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.sin
 
-/** The desktop's pill on a phone, floating over Roblox (HuntService): play / stop at
- *  its left end (a long press is a debug run, and play turns into a bug while it's
- *  on), the website's code, and the Discord webhook's box; dragged by the rest of it.
+/** The desktop's pill on a phone, floating over Roblox (HuntService), right after
+ *  Roblox's own menu and chat buttons: play / stop at its left end (a long press is a
+ *  debug run, and play turns into a bug while it's on) and the website's code; dragged
+ *  by the rest of it. The webhook is set in the app.
  *  An update makes play's white circle stretch along it as it comes down. Drawn as
  *  window/src/main.rs draws it, in its look. */
 @SuppressLint("ViewConstructor")
@@ -36,8 +37,6 @@ class PillView(ctx: Context, private val tall: Float = 40f) : FrameLayout(ctx) {
         fun debug()
         fun code()
         fun newCode()
-        fun hook(url: String)
-        fun editing(on: Boolean)  // the box wants the keyboard (the window takes focus then)
         fun drag(dx: Float, dy: Float, done: Boolean)
         fun outside()  // a touch somewhere else on the screen
         fun ours(): Boolean  // the hunter's own tap is landing: not yours
@@ -49,7 +48,6 @@ class PillView(ctx: Context, private val tall: Float = 40f) : FrameLayout(ctx) {
     var testing = false
     var code = ""      // the website's code, "" while it's on its way (three dots)
     var words = ""     // in the code's place when there's no code: "Off", "Turn on", "Code used"
-    var hook = ""      // the webhook saved
     var progress: Float? = null  // an update: 0 to 1, 1 installing
 
     // the desktop pill's look (look(false))
@@ -77,63 +75,8 @@ class PillView(ctx: Context, private val tall: Float = 40f) : FrameLayout(ctx) {
     // what's pressed, for the give under the finger
     private var down: String? = null
 
-    private val box = EditText(ctx).apply {
-        typeface = inter
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, tall * 0.3f)
-        setTextColor(INK)
-        setHintTextColor(DIM)
-        hint = "Webhook"
-        isSingleLine = true
-        imeOptions = EditorInfo.IME_ACTION_DONE
-        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-        gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(12f).toInt(), 0, dp(12f).toInt(), 0)
-        background = GradientDrawable().apply { setColor(BOXED); cornerRadius = dp(tall) }
-        setOnFocusChangeListener { _, focused ->
-            showHook(focused)
-            if (!focused) actions?.editing(false)
-        }
-        setOnEditorActionListener { v, action, _ ->
-            if (action == EditorInfo.IME_ACTION_DONE) {
-                actions?.hook(v.text.toString().trim())
-                stopEditing()
-                true
-            } else false
-        }
-        // over Roblox the window doesn't take the keyboard till the box is tapped
-        setOnTouchListener { _, e ->
-            if (e.actionMasked == MotionEvent.ACTION_UP && !hasFocus()) {
-                actions?.editing(true)
-                post {
-                    requestFocus()
-                    context.getSystemService(InputMethodManager::class.java).showSoftInput(this, 0)
-                }
-            }
-            false
-        }
-    }
-
-    fun stopEditing() {
-        box.clearFocus()
-        context.getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(box.windowToken, 0)
-        actions?.editing(false)
-    }
-
     init {
         setWillNotDraw(false)
-        clipChildren = false
-        addView(box)
-    }
-
-    /** The webhook, in full while you're typing it; "Webhook on" when one's saved. */
-    fun showHook(editing: Boolean = box.hasFocus()) {
-        if (editing) {
-            if (box.text.toString() == "Webhook on") box.setText(hook)
-            box.setTextColor(INK)
-        } else {
-            box.setText(if (hook.isNotEmpty()) "Webhook on" else "")
-            box.setTextColor(DIM)
-        }
     }
 
     // ------------------------------------------------------------ easing, as egui's
@@ -163,21 +106,13 @@ class PillView(ctx: Context, private val tall: Float = 40f) : FrameLayout(ctx) {
     private val playAt get() = inset + control / 2
     private val codeLeft get() = inset + control + dp(14f)
     private val codeRight get() = codeLeft + text.measureText("WWWWWW")
-    private val boxRect get() = RectF(codeRight + dp(12f), inset, width - inset, h - inset)
 
     override fun onMeasure(widthSpec: Int, heightSpec: Int) {
-        // as the desktop's: play, the code, a box about twice the code's width
-        val w = (codeRight + dp(12f) + text.measureText("WWWWWW") * 1.7f + inset).toInt()
-        setMeasuredDimension(w, h.toInt())
-        measureChildren(MeasureSpec.makeMeasureSpec(w, MeasureSpec.AT_MOST), MeasureSpec.makeMeasureSpec(h.toInt(), MeasureSpec.EXACTLY))
+        // play and the code, the round end as far past it as play is from the left
+        setMeasuredDimension((codeRight + h / 2).toInt(), h.toInt())
     }
 
-    override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
-        val rect = boxRect
-        box.measure(MeasureSpec.makeMeasureSpec(rect.width().toInt(), MeasureSpec.EXACTLY),
-                    MeasureSpec.makeMeasureSpec(rect.height().toInt(), MeasureSpec.EXACTLY))
-        box.layout(rect.left.toInt(), rect.top.toInt(), rect.right.toInt(), rect.bottom.toInt())
-    }
+    override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {}
 
     // ------------------------------------------------------------ the drawing
 
@@ -187,7 +122,6 @@ class PillView(ctx: Context, private val tall: Float = 40f) : FrameLayout(ctx) {
         val grow = min(1f, spring(t / 0.55f))
         val reveal = ease((t - 0.3f) / 0.45f)
         if (reveal < 1f) postInvalidateOnAnimation()
-        box.alpha = reveal
         val shape = RectF(0f, 0f, h + (width - h) * grow, h)
         val r = h / 2
         paint.color = EDGE
@@ -288,7 +222,6 @@ class PillView(ctx: Context, private val tall: Float = 40f) : FrameLayout(ctx) {
         canvas.restore()
         text.alpha = 255
         paint.alpha = 255
-        box.visibility = if (updating >= 1f) INVISIBLE else VISIBLE
         postInvalidateOnAnimation()
     }
 

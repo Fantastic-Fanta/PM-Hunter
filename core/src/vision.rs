@@ -106,6 +106,12 @@ pub fn chat_showing(f: &Frame, lay: &Layout) -> bool {
 /// the top-left corner, or None. Roblox draws it by its window, not by the
 /// game, so it isn't where the layout would put it on every screen shape.
 pub fn chat_button(f: &Frame) -> Option<Pt> {
+    roblox_pill(f).map(|b| Pt::new(b.r as f64 - 0.6 * b.h() as f64, (b.t + b.b) as f64 / 2.0))
+}
+
+/// Roblox's own dark gray pill at the top left (its menu and chat buttons): the
+/// phone's pill parks right after it.
+pub fn roblox_pill(f: &Frame) -> Option<IBox> {
     let (w, h) = (f.width() as f64, f.height() as f64);
     let area = IBox::new(0, 0, (w * 0.3) as i32, (h * 0.15) as i32);
     mask(f, area, gray_pill)
@@ -118,7 +124,6 @@ pub fn chat_button(f: &Frame) -> Option<Pt> {
                 && (b.r as f64) < w * 0.29
         })
         .fold(None::<IBox>, |best, b| if best.is_some_and(|x| x.t <= b.t) { best } else { Some(b) }) // the topmost
-        .map(|b| Pt::new(b.r as f64 - 0.6 * b.h() as f64, (b.t + b.b) as f64 / 2.0))
 }
 
 /// Roblox's chat window is open: its button's bubble is filled white (just an
