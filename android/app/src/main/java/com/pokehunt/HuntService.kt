@@ -164,17 +164,9 @@ class HuntService : AccessibilityService(), Phone {
             } + ")")
         }
         // the app's own screen: no pill over it (it's for setting up)
-        if (pkg == packageName) {
-            // (its toasts and the pill itself come from here too: only the screen counts)
-            if (event.className?.toString()?.endsWith("MainActivity") == true && !appShown) {
-                appShown = true
-                updateButton()
-            }
-            return
-        }
-        // the notification shade or a keyboard don't count
-        if (pkg == "com.android.systemui" || pkg in keyboards()) return
-        appShown = false
+        // the app's own screen, the notification shade or a keyboard don't count (the app
+        // says itself when its page is up: appOpen)
+        if (pkg == packageName || pkg == "com.android.systemui" || pkg in keyboards()) return
         val back = pkg == ROBLOX && !robloxShown
         robloxShown = pkg == ROBLOX
         updateButton()
@@ -244,7 +236,13 @@ class HuntService : AccessibilityService(), Phone {
     /** The pill shows while Roblox is on screen, or a hunt is on; not over the app itself. */
     private fun updateButton() = main { if ((robloxShown || hunter != null) && !appShown) showButton() else hideButton() }
 
-    @Volatile private var appShown = false  // the app's own screen is up
+    @Volatile private var appShown = false  // the app's own page is up (it says so: appOpen)
+
+    /** The app's page opened (true) or went (false): no pill over it meanwhile. */
+    fun appOpen(open: Boolean) {
+        appShown = open
+        updateButton()
+    }
 
     @Volatile private var starting = false
 
@@ -291,8 +289,9 @@ class HuntService : AccessibilityService(), Phone {
             // right after Roblox's menu and chat buttons, top left (placeButton finds them),
             // or where it was dragged to
             gravity = Gravity.TOP or Gravity.START
-            x = spot.getInt("pill_x", (150 * dp).roundToInt())
-            y = spot.getInt("pill_y", (12 * dp).roundToInt())
+            val (cx, cy) = clearOfCutout(spot.getInt("pill_x", (150 * dp).roundToInt()), spot.getInt("pill_y", (12 * dp).roundToInt()))
+            x = cx
+            y = cy
         }
         buttonParams = params
         val pill = PillView(this)
@@ -368,14 +367,31 @@ class HuntService : AccessibilityService(), Phone {
 
     /** Roblox's menu and chat buttons are at after (screenshot px): the pill goes right
      *  after them, centred on them, unless you've dragged it somewhere. */
+    /** Where the pill can be at (x, y), not under the camera's cutout (a punch hole at the
+     *  top left of a phone held sideways): right of it, or under it. */
+    private fun clearOfCutout(x: Int, y: Int): Pair<Int, Int> {
+        val dp = resources.displayMetrics.density
+        val w = (button?.width?.takeIf { it > 0 } ?: (170 * dp).roundToInt())
+        val h = (40 * dp).roundToInt()
+        val cutouts = getSystemService(WindowManager::class.java).currentWindowMetrics.windowInsets
+            .displayCutout?.boundingRects ?: return x to y
+        var (nx, ny) = x to y
+        for (c in cutouts) {
+            if (android.graphics.Rect(nx, ny, nx + w, ny + h).intersect(c)) {
+                // a hole by the left edge: right of it; one along the top: under it
+                if (c.left < w) nx = c.right + (8 * dp).roundToInt() else ny = c.bottom + (6 * dp).roundToInt()
+            }
+        }
+        return nx to ny
+    }
+
     override fun placeButton(after: Rect) {
         if (dragged || after == placedUnder) return
         placedUnder = after
         val dp = resources.displayMetrics.density
         val k = shrink
         val pillH = 40 * dp
-        val x = (after.r * k + 10 * dp).roundToInt()
-        val y = ((after.t + after.b) / 2.0 * k - pillH / 2).roundToInt()
+        val (x, y) = clearOfCutout((after.r * k + 10 * dp).roundToInt(), ((after.t + after.b) / 2.0 * k - pillH / 2).roundToInt())
         Hunt.prefs(this).edit().putInt("pill_x", x).putInt("pill_y", y).apply()
         main {
             val p = buttonParams

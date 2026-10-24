@@ -219,11 +219,13 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        HuntService.instance?.appOpen(true)  // (no pill over this page)
         refresh.run()
     }
 
     override fun onPause() {
         ui.removeCallbacks(refresh)
+        HuntService.instance?.appOpen(false)
         super.onPause()
     }
 }
