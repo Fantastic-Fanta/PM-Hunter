@@ -191,7 +191,7 @@ class HuntService : AccessibilityService(), Phone {
 
     // ------------------------------------------------------------ start / stop
 
-    /** A hunt with config.json's text (checked already: checkConfig). */
+    /** A hunt with config.json's text (the webhook: the rest is built in). */
     fun startHunt(config: String, watch: Boolean, debug: Boolean = false) {
         endHunter()
         val build = packageManager.getPackageInfo(packageName, 0).versionName ?: ""

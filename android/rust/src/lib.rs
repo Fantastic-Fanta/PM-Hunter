@@ -310,12 +310,6 @@ impl Hunter {
     }
 }
 
-/// config.json's mistake, or None if it's right.
-#[uniffi::export]
-pub fn check_config(text: String) -> Option<String> {
-    Config::parse(&text).err()
-}
-
 /// Every screen's fit forgotten: fitted again at the next encounter.
 #[uniffi::export]
 pub fn forget_calibration(data_dir: String) {

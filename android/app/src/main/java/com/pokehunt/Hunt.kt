@@ -9,7 +9,7 @@ import java.io.File
 object Hunt {
     fun configFile(ctx: Context): File {
         val f = File(ctx.filesDir, "config.json")
-        if (!f.exists()) f.writeText(ctx.assets.open("config.json").bufferedReader().readText())
+        if (!f.exists()) f.writeText("{\"webhook\": \"\"}\n")  // (just the webhook: the rest is built in)
         return f
     }
 
@@ -49,11 +49,10 @@ object Hunt {
     /** Starts a hunt. Blocks for a moment (it checks that screenshots work),
      *  so not on the main thread. Null once started, else what's missing:
      *  "service" (off in Accessibility), "capture" (needs screen capture
-     *  allowed first) or the config's problem. */
+     *  allowed first). */
     fun start(ctx: Context): String? {
         val service = HuntService.instance ?: return "service"
-        val cfg = configFile(ctx).readText()
-        com.pokehunt.core.checkConfig(cfg)?.let { return "What to hunt has a mistake: $it" }
+        val cfg = configFile(ctx).readText()  // (just the webhook: the rest is built in)
         if (CaptureService.instance == null && !service.screenshotsWork()) return "capture"
         service.startHunt(cfg, watch = false)  // (a debug run is play's long press, not a mode)
         return null

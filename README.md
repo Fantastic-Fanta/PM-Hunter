@@ -1,12 +1,12 @@
 # PM-Hunter
 
-Copy `config.example.json` to `config.json` and put your Discord webhook in it.
-The Android build reports to its debug channel from `secrets.json`, which isn't
+Nothing to configure: paste your Discord webhook into the pill's box (or the
+phone app's), and that's all. The Android build reports to its debug channel from `secrets.json`, which isn't
 in the repository: `{"android_debug_webhook": "..."}` (Windows' is a GitHub secret).
 
 Hunts wild encounters in the Roblox Pokemon game: runs from the ones you don't
 want, catches the ones worth a ball, and pings Discord and holds the battle for
-you when a wanted one shows up. What's wanted is in `config.json`.
+you when a wanted one shows up: any Pokemon with a reskin and a gradient.
 
 The layout is fitted to each screen on its first encounter (auto-calibration),
 so any window size or phone shape works. It's refitted whenever a battle can't
@@ -58,8 +58,9 @@ Hunt runs from it. The hunter's screenshots are of what's under the pill.
 There's no self-update (a `git pull` brings the new version; Poopihunt.command
 builds Hunt again).
 
-Every reskin with a gradient is caught, on every platform, without a rule
-for it: `"catch_reskin_gradient": false` in config.json turns that off.
+Every reskin with a gradient is caught, on every platform. That and the catch
+plan are built in: config.json keeps only the webhook (anything else in an old
+one is passed over).
 
 ## Windows
 
@@ -83,12 +84,11 @@ middle of the dimmed screen, flying into the pill's end as play; it closes
 by shrinking right into a ball. A find turns it white. The hunter runs inside
 Hunt.exe (paused from when it opens), on a thread of its own. It
 catches the optimal way (a Quick Ball first, Repeat Balls, Timer Balls once 9
-turns have gone by; a favorited Park Ball before all of them), unless
-config.json's `catch` says otherwise. What a PC keeps (config.json, finds,
+turns have gone by; a favorited Park Ball before all of them). What a PC keeps
+(config.json with the webhook, finds,
 calibration, the website key, window.json for the pill's place) is in
 `%LOCALAPPDATA%\Hunt`, with hunt.log: all the hunter printed (hunt.old.log
-past 5 MB). A new config.json has no rules, so every reskin with a gradient is
-caught; anything more (targets, the catch plan) is edited in that file. Hunt
+past 5 MB). Hunt
 checks https://poopihunt.xyz/windows.json when it opens and whenever a hunt
 stops; a newer build is downloaded, installed, and Hunt starts again.
 
@@ -126,8 +126,7 @@ The app is in `android/`. `Hunt.apk` is the built copy.
 2. Open Hunt and tap **Turn on Hunt**, then switch Hunt on. If it's
    greyed out, go to Settings > Apps > Hunt, tap ⋮ (top right) > **Allow
    restricted settings**, and try again.
-3. Open **What to hunt**, paste your `config.json` (with your webhook) and tap
-   **Save**.
+3. Paste your Discord webhook into **Paste Discord webhook here**.
 4. Open Roblox. A small **OFF** button floats at the right whenever Roblox is
    on screen: tap it to start hunting (it turns **ON**), tap again to stop. Drag
    it out of the way if it covers something. **Start** in the app does the same.
@@ -159,8 +158,7 @@ in another one.
 
 **Take over** pauses the bot in whatever battle is on (or the next one): the
 page shows the encounter, a picture after every turn, your lead's HP, and
-buttons to throw a ball (`"web_balls"` in config.json, Timer and Repeat by
-default), use a move, Restore HP / PP (the catch plan's heal and PP items) or
+buttons to throw a ball (Quick, Timer and Repeat), use a move, Restore HP / PP (the catch plan's heal and PP items) or
 Run. **Resume hunting** hands it back. Started in the middle of a battle,
 Hunt leaves that battle to you and switches itself off. Watch only doesn't
 connect (it never clicks).

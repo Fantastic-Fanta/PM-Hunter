@@ -71,7 +71,7 @@ fn hunt(enemy: Vec<TextHit>, config: &str, done: impl Fn(&[String], &[String]) -
     let dir = std::env::temp_dir().join(format!("hunt-test-{}", hunt_core::util::random_hex(4)));
     let store = Store::new(&dir);
     let lines = Arc::new(Lines(Mutex::new(Vec::new())));
-    let cfg = Config::parse(config).unwrap();
+    let cfg = Config::with_rules(config).unwrap();
     let (control, hunter) = hunt_core::start(dev.clone(), lines.clone(), DebugChannel::off(), cfg, store,
                                              Options { build: "test".into(), ..Default::default() });
     let thread = std::thread::spawn(move || hunter.run());

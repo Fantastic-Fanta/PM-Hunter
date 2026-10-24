@@ -139,7 +139,7 @@ fn calibration_keeps_its_colors() {
 
 fn cfg() -> Config {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/rules-config.json");
-    Config::load(&path).unwrap()
+    Config::with_rules(&std::fs::read_to_string(&path).unwrap()).unwrap()
 }
 
 fn enc(species: &str) -> Enc {

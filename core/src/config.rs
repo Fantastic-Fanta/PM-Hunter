@@ -1,5 +1,7 @@
-//! config.json: what to hunt for, the webhook, and the catch plan. The same
-//! file on every platform.
+//! What the hunt goes by. Nothing to set: what's caught (a reskin and a gradient, any
+//! Pokemon), the catch plan and the rest are built in. config.json keeps only the
+//! Discord webhook (the pill's box, the phone app's), and "debug_webhook"; anything
+//! else in an old one is passed over. with_rules reads rules too, for the tests.
 
 use crate::rules::{show, Rule, FIELDS};
 use serde_json::{json, Map, Value};
@@ -46,8 +48,21 @@ pub fn catch_plan() -> Map<String, Value> {
 pub const WEB_BALLS: [&str; 3] = ["Quick Ball", "Timer Ball", "Repeat Ball"]; // the page's Bag, unless "web_balls" says
 
 impl Config {
-    /// The config, or what's wrong with it.
+    /// config.json: its webhook (and debug_webhook) and nothing else, the rest built in.
+    /// Never wrong: a file that isn't JSON has no webhook.
     pub fn parse(text: &str) -> Result<Config, String> {
+        let raw: Map<String, Value> = serde_json::from_str(text).unwrap_or_default();
+        let mut kept = Map::new();
+        for k in ["webhook", "debug_webhook"] {
+            if let Some(v) = raw.get(k) {
+                kept.insert(k.to_string(), v.clone());
+            }
+        }
+        Config::with_rules(&Value::Object(kept).to_string())
+    }
+
+    /// A config with rules and settings of its own (the tests'), or what's wrong with it.
+    pub fn with_rules(text: &str) -> Result<Config, String> {
         let v: Value = serde_json::from_str(text).map_err(|e| format!("config.json: {e}"))?;
         let Value::Object(raw) = v else { return Err("config.json: not a {...}".into()) };
         let rules = |key: &str| -> Result<Vec<Rule>, String> {
@@ -150,6 +165,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn only_the_webhook_is_read() {
+        let c = Config::parse(r#"{"webhook": "https://x", "targets": [{"species": "Mew"}], "catch": {"max_balls": 2}}"#).unwrap();
+        assert_eq!(c.webhook, "https://x");
+        assert!(c.targets.is_empty());
+        assert_eq!(c.notify, vec![auto_catch()]);
+        assert_eq!(c.num("max_balls"), 8.0);
+        assert_eq!(Config::parse("not json").unwrap().webhook, "");
+    }
+
+    #[test]
     fn an_empty_config_catches_reskins_with_gradients() {
         let c = Config::parse(r#"{"webhook": "", "targets": [], "notify": []}"#).unwrap();
         assert_eq!(c.notify, vec![auto_catch()]);
@@ -159,14 +184,14 @@ mod tests {
 
     #[test]
     fn mistakes_are_said() {
-        assert!(Config::parse(r#"{"targets": [{"specie": "Mew"}]}"#).unwrap_err().contains("unknown field(s) specie"));
-        assert!(Config::parse(r#"{"catch_reskin_gradient": false}"#).unwrap_err().contains("nothing to hunt for"));
+        assert!(Config::with_rules(r#"{"targets": [{"specie": "Mew"}]}"#).unwrap_err().contains("unknown field(s) specie"));
+        assert!(Config::with_rules(r#"{"catch_reskin_gradient": false}"#).unwrap_err().contains("nothing to hunt for"));
         // a legendary needs a reskin and a gradient too, as every Pokemon
-        let c = Config::parse(r#"{"notify": [{"species": "legendary", "reskin": "any"},
+        let c = Config::with_rules(r#"{"notify": [{"species": "legendary", "reskin": "any"},
                                              {"species": "legendary", "gradient": "any"},
                                              {"species": "legendary", "reskin": "Night"}]}"#).unwrap();
         assert_eq!(c.notify.len(), 2); // the Night one, and reskin + gradient
-        let c = Config::parse(r#"{"targets": [{"species": "Mew"}], "catch": {"first_ball": null}}"#).unwrap();
+        let c = Config::with_rules(r#"{"targets": [{"species": "Mew"}], "catch": {"first_ball": null}}"#).unwrap();
         assert_eq!(c.str("first_ball"), "");
     }
 }

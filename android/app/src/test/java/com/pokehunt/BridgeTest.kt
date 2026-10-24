@@ -90,9 +90,7 @@ class BridgeTest {
         assertTrue(File(dir, "encounters.csv").readText().contains("Quaxly"))
     }
 
-    @Test fun checksTheConfig() {
-        assertEquals(null, com.pokehunt.core.checkConfig("""{"targets": [{"species": "Mew"}]}"""))
-        assertNotNull(com.pokehunt.core.checkConfig("""{"targets": [{"specie": "Mew"}]}"""))
+    @Test fun makesAKey() {
         assertEquals(43, com.pokehunt.core.newKey().length)
     }
 }
