@@ -80,7 +80,13 @@ class PillView(ctx: Context, private val tall: Float = 40f) : FrameLayout(ctx) {
     private val h get() = dp(tall)
     private val inset get() = dp(tall / 7)
     private val control get() = h - 2 * inset
-    private val born = SystemClock.uptimeMillis()
+    private var born = SystemClock.uptimeMillis()
+
+    /** The opening again (Roblox back in front). */
+    fun open() {
+        born = SystemClock.uptimeMillis()
+        invalidate()
+    }
 
     private val inter = resources.getFont(R.font.inter_medium)
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {

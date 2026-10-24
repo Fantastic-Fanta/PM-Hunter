@@ -175,8 +175,10 @@ class HuntService : AccessibilityService(), Phone {
         // the notification shade or a keyboard don't count
         if (pkg == "com.android.systemui" || pkg in keyboards()) return
         appShown = false
+        val back = pkg == ROBLOX && !robloxShown
         robloxShown = pkg == ROBLOX
         updateButton()
+        if (back) main { button?.open() }  // Roblox in front again: the pill opens again
     }
 
     private fun appName(pkg: String) = runCatching {
