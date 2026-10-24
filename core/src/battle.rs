@@ -379,16 +379,27 @@ impl Hunt {
             if let Some(i) = i.filter(|i| pps[*i] == 0) {
                 let _ = i;
                 self.trace(&format!("fight: {mv} has no PP left, back"));
-                if let Some(back) = texts.iter().find(|t| t.is("back")) {
-                    self.click(back.pt())?;
-                }
+                self.back_to_menu(lay, 6.0)?;
                 return Ok("no pp");
             }
             self.trace(&format!("fight: {mv}{}", i.map(|i| format!(" ({} PP)", pps[i])).unwrap_or_default()));
             self.move_pp = i.map(|i| pps[i]);
             self.click(hit.pt())?;
             self.move_mouse(lay.pt(layout::IDLE_SPOT))?;
-            return Ok("used");
+            // the move list goes once a move's used; if it stays the click didn't take (no PP
+            // left, its count misread): back, as for no PP (the battle stood in the list)
+            let still = now() + 2.5;
+            while now() < still {
+                self.nap(0.3)?;
+                let f = self.grab();
+                if !self.screen_texts(&f).iter().any(|t| t.is("back")) {
+                    return Ok("used");
+                }
+            }
+            self.trace(&format!("fight: {mv} didn't take (no PP left?), back"));
+            self.move_pp = Some(0);
+            self.back_to_menu(lay, 6.0)?;
+            return Ok("no pp");
         }
         self.trace(&format!("fight: didn't find {mv} in the move menu"));
         Ok("no menu")
@@ -591,7 +602,17 @@ impl Hunt {
             }
             let again = self.read_enemy(&f, &lay);
             if !again.species.is_empty() && !same_mon(&again, enc) {
-                return Ok(("caught".into(), details)); // already the next encounter
+                // the next encounter already (caught, its words gone by), or this one misread
+                // (a Windows read of "Mewtwo" was taken for a catch, and the battle went on):
+                // the next only if another read says the same, and it's another Pokemon
+                self.nap(0.4)?;
+                let f2 = self.grab();
+                let twice = self.read_enemy(&f2, &lay);
+                if same_mon(&twice, &again) && !same_word(&again.species, &enc.species) {
+                    return Ok(("caught".into(), details));
+                }
+                self.trace(&format!("read as {} this turn: the same battle", again.describe()));
+                continue;
             }
             cur = again;
         }
@@ -631,11 +652,19 @@ impl Hunt {
                             if moves.iter().any(|m| m.pp.is_none()) {
                                 format!(" (read: {})", menu_text.iter().map(|t| t.text.as_str()).collect::<Vec<_>>().join(" | "))
                             } else { String::new() }));
-        let end = now() + 6.0;
+        self.back_to_menu(lay, 6.0)?;
+        Ok(moves)
+    }
+
+    /// From the move list back to Fight / Switch / Bag / Run: Back, again till that's up
+    /// (a click on Back can go unseen, and the battle then stood in the move list). True
+    /// once it's up.
+    fn back_to_menu(&mut self, lay: &Layout, seconds: f64) -> R<bool> {
+        let end = now() + seconds;
         while now() < end {
             let f = self.grab();
             if menu_ready(&f, lay) {
-                break;
+                return Ok(true);
             }
             let texts = self.screen_texts(&f);
             if self.close_chat(&f, &texts)? {
@@ -647,7 +676,8 @@ impl Hunt {
             }
             self.nap(0.6)?;
         }
-        Ok(moves)
+        self.trace("fight: still not back from the move list");
+        Ok(false)
     }
 
     fn set_moves(&self, moves: Vec<reader::Move>) {

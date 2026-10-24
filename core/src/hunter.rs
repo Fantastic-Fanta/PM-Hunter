@@ -1334,10 +1334,12 @@ impl Hunt {
                     }
                     continue;
                 }
-                if (result == "gave up" || result == "no bag") && !practice
-                    && (result == "no bag" || c.cfg.str("on_fail") == "hold")
+                // couldn't do it alone (the bag, a turn that never ended, or out of balls with
+                // on_fail "hold"): never run from it, ping, hold the battle for you
+                if matches!(result.as_str(), "gave up" | "no bag" | "timeout") && !practice
+                    && (result != "gave up" || c.cfg.str("on_fail") == "hold")
                 {
-                    self.found(&enc, &f, &lay)?; // couldn't do it alone: ping, hold the battle for you
+                    self.found(&enc, &f, &lay)?;
                     self.keep_alive(&lay)?;
                     continue;
                 }

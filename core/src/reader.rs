@@ -201,7 +201,18 @@ pub fn moves(texts: &[TextHit]) -> Vec<Move> {
 
 /// The PP numbers under a row of moves (one hit can hold several).
 pub fn pp_numbers(text: &str) -> Vec<i64> {
-    PP.captures_iter(text).filter_map(|m| m[1].parse().ok()).collect()
+    // digits read as letters ("0 / IO": Windows, for "0 / 10"): a short word of those and
+    // digits is a number
+    let text: String = text.split(' ').map(|w| {
+        let lookalike = (2..=3).contains(&w.len()) && w.chars().all(|c| c.is_ascii_digit() || "OoIl".contains(c))
+            && w.chars().any(|c| !c.is_ascii_digit());
+        if lookalike {
+            w.chars().map(|c| match c { 'O' | 'o' => '0', 'I' | 'l' => '1', c => c }).collect()
+        } else {
+            w.to_string()
+        }
+    }).collect::<Vec<_>>().join(" ");
+    PP.captures_iter(&text).filter_map(|m| m[1].parse().ok()).collect()
 }
 
 pub fn has_digit(t: &str) -> bool {
@@ -346,6 +357,14 @@ mod tests {
 
     fn hit(t: &str, x: f64, y: f64) -> TextHit {
         TextHit::new(t, x, y)
+    }
+
+    #[test]
+    fn pp_with_digits_read_as_letters() {
+        // Windows, on a move list with Yawn out of PP: "0 / 10" read as "0 / IO"
+        assert_eq!(pp_numbers("Yawn 0 / IO Normal Status Protect 1/10 Normal Status"), vec![0, 1]);
+        assert_eq!(pp_numbers("8 / 1O"), vec![8]);
+        assert_eq!(pp_numbers("Normal Status"), Vec::<i64>::new());
     }
 
     #[test]
