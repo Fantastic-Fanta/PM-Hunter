@@ -177,7 +177,7 @@ fn select_all() {
 
 /// Into the text box that has focus, what's in it gone first (select all,
 /// delete; and whatever select all didn't take, from the end back: a search
-/// box holds a name or two, "Park Ball", "Max Elixir").
+/// box holds a name or two, "Quick Ball", "Max Elixir").
 pub fn type_text(text: &str) {
     select_all();
     pause(50);

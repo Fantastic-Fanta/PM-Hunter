@@ -493,8 +493,9 @@ impl Hunt {
         let max_turns = cfg.num(if legendary { "legendary_max_turns" } else { "max_turns" }) as u32;
         let (mut balls, mut turns, mut drowsy, mut heals): (Vec<String>, u32, bool, u32) = (Vec::new(), 0, false, 0);
         let mut cur = enc.clone();
-        // the first ball is a Park Ball whenever one is favorited in the bag
-        let mut park = cfg.flag("park_ball").then(|| "Park Ball".to_string());
+        // the first ball is a Park Ball if one's favorited, in sight at the top of the
+        // Pokeballs tab (use_item's prefer): the one place a Park Ball is ever chosen
+        let mut park = Some("Park Ball".to_string());
         // A Repeat Ball only helps on species you've caught before (the little Poke Ball
         // icon); anything new gets new_ball instead.
         let new = if enc.owned { None } else { Some(cfg.str("new_ball")).filter(|b| !b.is_empty()) };

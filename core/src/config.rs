@@ -28,7 +28,6 @@ pub fn auto_catch() -> Rule {
 /// config.json "catch" overrides these.
 pub fn catch_plan() -> Map<String, Value> {
     json!({
-        "park_ball": true,  // a favorited Park Ball (it never misses) goes first, before first_ball
         "first_ball": "Quick Ball", "sleep_move": "Yawn", "guard_move": "Protect",
         "asleep_ball": "Repeat Ball", "awake_ball": "Repeat Ball", "new_ball": "Dive Ball",
         "max_balls": 8,
@@ -156,7 +155,6 @@ mod tests {
         assert_eq!(c.notify, vec![auto_catch()]);
         assert_eq!(c.str("first_ball"), "Quick Ball");
         assert_eq!(c.num("max_balls"), 8.0);
-        assert!(c.flag("park_ball"));
     }
 
     #[test]
