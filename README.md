@@ -21,7 +21,7 @@ Download it from **https://poopihunt.xyz**.
 
 - **Play / stop.** A right click (computer) or long press (phone) is a
   **debug run**: it hunts, and at the next encounter checks every step (a Quick
-  Ball, Yawn, running, the bag, saving) and reports to the debug channel. A new
+  Ball, Yawn, running, and using the bag) and reports to the debug channel. A new
   install's first hunt does one by itself.
 - **The website code** (tap to copy on a phone). Type it on
   https://poopihunt.xyz/app to watch, take over a battle and throw balls from
@@ -37,8 +37,8 @@ on through it); phones update when you press stop.
 All Rust, one Cargo workspace:
 
 - `core/`: the hunter, the same everywhere: reading the screen, fitting the
-  layout, the rules and catch plan (built in: `core/src/config.rs`), the bag and
-  MENU, saving, the website link, Discord and the debug channel.
+  layout, the rules and catch plan (built in: `core/src/config.rs`), bag/menu
+  interactions, the website link, Discord and the debug channel.
 - `window/`: Hunt / Hunt.exe, the pill with the hunter inside, and each
   desktop's screenshots, clicks and text recognition (`window/src/desktop/`).
 - `android/`: the app (Kotlin) around `android/rust/` (hunt-core through UniFFI).
