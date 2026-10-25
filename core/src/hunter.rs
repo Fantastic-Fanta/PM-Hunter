@@ -25,7 +25,6 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
 use std::sync::{Arc, Condvar, Mutex};
 
-pub const SAVE_EVERY: f64 = 125.0; // s; the game allows one save every 2 minutes
 pub const GONE_AFTER: f64 = 1.0; // s without the Mute button before an encounter counts as over
 pub const TURN_TIMEOUT: f64 = 60.0; // s for one turn: a throw with its shakes, or a move
 pub const AFK_EVERY: f64 = 15.0 * 60.0; // Roblox kicks after 20 min without input
@@ -52,7 +51,7 @@ pub struct Options {
     pub watch: bool,
     /// Start paused (the window's hunter: the website code is there at once).
     pub paused: bool,
-    /// Catch every encounter (then save), a picture of every catch turn and click.
+    /// Catch every encounter, with a picture of every catch turn and click.
     pub debug: bool,
     /// Catch the next n encounters too, without the first-turn ball.
     pub practice: u32,
@@ -157,8 +156,8 @@ impl Control {
         }
     }
 
-    /// The hunt ends at its next quiet moment: no battle on screen, nothing owed
-    /// (a save after a catch). For an update, to carry on in the new build.
+    /// The hunt ends at its next quiet moment, with no battle on screen.
+    /// For an update, to carry on in the new build.
     pub fn stop_between(&self) {
         self.between.store(true, Relaxed);
         self.wake.notify_all();
@@ -349,7 +348,6 @@ pub struct Hunt {
     pub(crate) cal_saved: bool,
     pub(crate) cal_file: std::path::PathBuf,
     pub(crate) last_click: f64,
-    pub(crate) save_wait: u64,
     pub(crate) pp_for: String,
     pub(crate) menu_spots: Option<Map<String, Value>>,
     pub(crate) timing: Option<Timing>,
@@ -425,7 +423,6 @@ pub fn start(dev: Arc<dyn Device>, sink: Arc<dyn Sink>, debug: Arc<DebugChannel>
         cal_saved: false,
         cal_file: c.store.calibration_file(),
         last_click: now(),
-        save_wait: 0,
         pp_for: String::new(),
         menu_spots: None,
         timing: None,
@@ -1124,7 +1121,7 @@ impl Hunt {
         let mut since: Option<f64> = None;
         let mut last_battle: Option<Enc> = None; // the battle on screen, once read
         let (mut last_enc, mut last_status, mut quiet_said) = (now(), now(), false);
-        let (mut save_due, mut last_save, mut last_check) = (false, 0.0, 0.0);
+        let mut last_check = 0.0;
         let (mut first_look, mut last_seen) = (true, now());
         let key = self.traits.toggle_key;
         // A new install (no debug run gone right, no encounter ever): the first hunt's first
@@ -1150,7 +1147,7 @@ impl Hunt {
             self.print(&format!("  auto-catch: {}", rules::show(&rule)));
         }
         if c.opts.debug {
-            self.print("  debug mode: catching every encounter, then saving; a screenshot every catch turn and click");
+            self.print("  debug mode: catching every encounter; a screenshot every catch turn and click");
             c.out.debug.every_shot.store(true, Relaxed);
         }
         for rule in &c.cfg.post {
@@ -1232,23 +1229,8 @@ impl Hunt {
                 if phase_changed {
                     c.publish();
                 }
-                if c.between.load(Relaxed) && !c.remote() && !save_due {
+                if c.between.load(Relaxed) && !c.remote() {
                     return Err(Halt::Stopped);
-                }
-                if save_due && !watch && now() - last_save > SAVE_EVERY {
-                    self.save_wait = 0;
-                    if self.save_game(0.0)? {
-                        self.say("  (game saved)");
-                        save_due = false;
-                        last_save = now();
-                    } else {
-                        // try again in 20 s, or when the game said it can
-                        if self.save_wait > 0 {
-                            self.say(&format!("  (the game says wait {} s to save)", self.save_wait));
-                        }
-                        last_save = now() - SAVE_EVERY + f64::max(20.0, self.save_wait as f64 + 5.0);
-                    }
-                    continue;
                 }
                 self.say("waiting for an encounter...");
                 if !watch {
@@ -1257,7 +1239,7 @@ impl Hunt {
                 if !watch && now() - last_enc > 20.0 && now() - last_check > 20.0 {
                     last_check = now();
                     if self.clear_leftovers()? {
-                        self.say("  (closed a save message / menu left open)");
+                        self.say("  (closed a leftover menu or chat panel)");
                     }
                 }
                 if let (Some(h), false) = (hint, watch) {
@@ -1341,9 +1323,7 @@ impl Hunt {
                         self.found(&enc, &f, &lay)?; // you may not be looking at the page
                     }
                 }
-                if self.remote_battle(&enc, &f, &lay)? {
-                    save_due = c.cfg.boolean("save_after_catch", true);
-                }
+                self.remote_battle(&enc, &f, &lay)?;
             } else if rule.is_some() {
                 if !again {
                     self.log_encounter(&enc, "found");
@@ -1372,7 +1352,6 @@ impl Hunt {
                     c.toggle();
                 }
                 c.publish(); // the window's Debug mode turns off
-                last_save = now(); // it saved
             } else if practice || catch_it {
                 // worth catching, not stopping
                 if practice {
@@ -1387,7 +1366,6 @@ impl Hunt {
                 self.print(&format!("  catch: {result} ({details})"));
                 self.log_encounter(&enc, &result);
                 if result == "caught" {
-                    save_due = c.cfg.boolean("save_after_catch", true);
                     if !practice {
                         c.discord.post(&format!("Caught: {} ({details})", enc.title()), Some(png(&game_shot(&f, &lay))));
                     }

@@ -1,12 +1,12 @@
-//! Between encounters: the MENU (Save, the Bag for a PP item), what's left open
-//! closed, and the window's Debug mode, which goes through all of it once.
+//! Between encounters: the MENU and the Bag for a PP item, what's left open
+//! closed, and the window's Debug mode, which goes through the bag workflow once.
 
 use crate::battle::favorite_rows;
 use crate::hunter::{Halt, Hunt, R};
 use crate::layout::{self, Layout};
 use crate::picture::game_shot;
 use crate::px::{Frame, Pt};
-use crate::reader::{self, find_tab, is_count, menu_button, menu_open, save_message, TextHit};
+use crate::reader::{self, find_tab, is_count, menu_button, menu_open, TextHit};
 use crate::rules::{norm, same_word, Enc};
 use crate::store::Store;
 use crate::util::{clip, now, write_atomic};
@@ -30,7 +30,7 @@ fn as_pt(v: &Value) -> Option<Pt> {
 impl Hunt {
     // ------------------------------------------------------------ where the MENU's parts were
 
-    /// Where MENU's tab, its Bag and its Save were last clicked on this screen
+    /// Where MENU's tab and its Bag were last clicked on this screen
     /// size (menu.json): clicked at once the next time (an encounter can come in
     /// the second it takes to read them again).
     fn menu_spot(&mut self, f: &Frame, name: &str) -> Option<Value> {
@@ -52,7 +52,7 @@ impl Hunt {
         }
         for t in texts {
             let n = norm(&t.text);
-            if n == "bag" || n == "save" {
+            if n == "bag" {
                 let at = menu_button(t.pt(), texts, false);
                 mine.insert(n, json!([at.x, at.y]));
             }
@@ -61,8 +61,8 @@ impl Hunt {
         let _ = write_atomic(&self.c.store.path("menu.json"), text.as_bytes());
     }
 
-    /// MENU's tab, then item ("bag", "save"), at once where they were last; true
-    /// if both were known (whether it worked shows in what comes next).
+    /// MENU's tab, then Bag where they were last; true if both were known
+    /// (whether it worked shows in what comes next).
     fn quick_menu(&mut self, item: &str, why: &str) -> R<bool> {
         let mut f = self.grab();
         let (Some(tab), Some(at)) = (self.menu_spot(&f, "menu").as_ref().and_then(as_pt), self.menu_spot(&f, item).as_ref().and_then(as_pt))
@@ -112,113 +112,6 @@ impl Hunt {
             }
             self.nap(self.traits.poll)?;
         }
-    }
-
-    /// MENU -> Save -> the message clicked away -> MENU closed, between
-    /// encounters. True if the game saved; if it said to wait, save_wait has how
-    /// long. wait: s to look for MENU's tab in. MENU and Save are clicked at once
-    /// where they were last (quick_menu), read otherwise.
-    pub(crate) fn save_game(&mut self, wait: f64) -> R<bool> {
-        let (mut step, mut saved, mut shown, mut saved_at, mut tries) = ("save", false, false, 0.0, 0);
-        let (mut tab, mut tab_at) = (None::<Pt>, 0.0);
-        let (mut after, mut closed_at) = ("close", 0.0); // where a message's going leads
-        let f = self.grab();
-        if self.find_mute(&f, None).is_some() {
-            return Ok(false); // an encounter's on: not now
-        }
-        let quick = self.quick_menu("save", "save")?;
-        if quick {
-            (step, saved_at) = ("message", now());
-        } else {
-            let f = self.grab();
-            let texts = self.screen_texts(&f);
-            if !menu_open(&texts) {
-                // (open already: straight to Save)
-                let Some(t) = self.menu_tab(wait)? else { return Ok(false) };
-                self.trace(&format!("save: MENU at ({:.0}, {:.0})", t.x, t.y));
-                self.click(t)?;
-                (tab, tab_at) = (Some(t), now());
-            }
-        }
-        let end = now() + 20.0;
-        let (mut img, mut texts) = (None::<Frame>, Vec::new());
-        while now() < end {
-            self.nap(self.traits.poll)?;
-            let f = self.grab();
-            texts = self.screen_texts(&f);
-            img = Some(f.clone());
-            if self.close_chat(&f, &texts)? {
-                continue;
-            }
-            if step == "save" {
-                if self.find_mute(&f, None).is_some() {
-                    return Ok(false); // an encounter came first
-                }
-                let hit = texts.iter().find(|t| norm(&t.text) == "save").map(|t| t.pt());
-                if let Some(hit) = hit.filter(|_| menu_open(&texts)) {
-                    let at = menu_button(hit, &texts, tries > 0);
-                    self.trace(&format!("save: clicking Save at ({:.0}, {:.0})", at.x, at.y));
-                    self.click(at)?;
-                    self.remember_menu(&f, &texts, tab);
-                    (step, saved_at) = ("message", now());
-                } else if !menu_open(&texts) && now() - tab_at > 2.0 {
-                    // (closed: the quick clicks missed)
-                    if let Some(t) = find_menu_tab(&f, &texts) {
-                        self.trace(&format!("save: MENU at ({:.0}, {:.0})", t.x, t.y));
-                        self.click(t)?;
-                        (tab, tab_at) = (Some(t), now());
-                    }
-                }
-            } else if step == "message" {
-                if let Some(msg) = texts.iter().find(|t| save_message(&t.text)).cloned() {
-                    if !shown {
-                        self.trace(&format!("save: the game says \"{}\"", msg.text));
-                    }
-                    if let Some(w) = reader::save_wait(&msg.text) {
-                        self.save_wait = w;
-                    }
-                    // The text types itself out: a click while it's typing only finishes
-                    // it, so keep clicking until the box is gone.
-                    saved = saved || msg.text.to_lowercase().contains("successful");
-                    shown = true;
-                    self.click(msg.pt())?;
-                    self.nap(0.3)?;
-                } else if shown {
-                    step = after; // the message was there and is gone now
-                } else if now() - saved_at > (if quick && tries == 0 { 2.5 } else { 4.0 }) && tries < 2 {
-                    // Save didn't take
-                    tries += 1;
-                    self.trace("save: no message yet, clicking Save again");
-                    step = "save";
-                }
-            }
-            if (step == "close" || step == "closed") && texts.iter().any(|t| save_message(&t.text)) {
-                // "Do not close the game until it says 'Save successful'" goes, then a
-                // moment later "Save successful…" comes up: that one's clicked away too
-                (after, step) = (step, "message");
-                continue;
-            }
-            if step == "close" {
-                // the menu panel comes back; its tab closes it
-                if menu_open(&texts) {
-                    if let Some(hit) = find_menu_tab(&f, &texts) {
-                        self.trace("save: closing the menu");
-                        self.click(hit)?;
-                        (step, closed_at) = ("closed", now());
-                    }
-                }
-            } else if step == "closed" {
-                if !menu_open(&texts) {
-                    return Ok(saved);
-                } else if now() - closed_at > 2.0 {
-                    step = "close"; // (the tab's click went to a message)
-                }
-            }
-        }
-        let shot = img.as_ref().map(|f| self.snapshot(f, &format!("save-stuck-at-{step}"))).unwrap_or_default();
-        let read = texts.iter().map(|t| t.text.as_str()).collect::<Vec<_>>().join(", ");
-        self.say(&format!("  (saving got stuck at \"{step}\": {shot}, read: {})", clip(&read, 300)));
-        Ok(saved)
     }
 
     /// The bag is open (its Close and its tabs read) within seconds.
@@ -390,15 +283,11 @@ impl Hunt {
         Ok(false)
     }
 
-    /// Closes a save message or menu panel left open; no encounters come while
-    /// either is up. True if it found something to close.
+    /// Closes a leftover menu or chat panel between encounters.
+    /// True if it found something to close.
     pub(crate) fn clear_leftovers(&mut self) -> R<bool> {
         let f = self.grab();
         let texts = self.screen_texts(&f);
-        if let Some(msg) = texts.iter().find(|t| save_message(&t.text)).map(|t| t.pt()) {
-            self.click(msg)?;
-            return Ok(true);
-        }
         if menu_open(&texts) {
             if let Some(tab) = find_menu_tab(&f, &texts) {
                 self.click(tab)?;
@@ -415,9 +304,9 @@ impl Hunt {
     /// Quick Ball (and Yawn, when the lead is the Yawn user and it wasn't
     /// caught), then away; MENU > Bag > Recovers: the heal and PP items,
     /// favorites as you keep them (at the top of the tab), each used once
-    /// outside battle (the Pokemon Party screen); the bag closed; MENU > Save,
-    /// its message clicked away. Each step to the debug channel, a picture with
-    /// any that went wrong, a summary at the end. True if every step went right.
+    /// outside battle (the Pokemon Party screen); then the bag is closed.
+    /// Each step is reported to the debug channel, with a picture of any
+    /// failure and a summary at the end. True if every step went right.
     pub(crate) fn debug_workflow(&mut self, enc: &Enc, f: &Frame, lay: &Layout) -> R<bool> {
         let cfg = self.c.cfg.clone();
         let mut steps: Vec<(String, bool, String)> = Vec::new();
@@ -483,8 +372,7 @@ impl Hunt {
             r => r?,
         }
         // the MENU at once, as the battle goes (no encounter comes while it or the bag is up):
-        // the bag's favorites, an item, its message, the other item; the bag closed, and
-        // straight back to the MENU for Save
+        // the bag's favorites, an item, its message, the other item; then close it
         let (heal, pp) = (cfg.str("heal_item"), cfg.str("pp_item"));
         let opened = self.open_bag("debug")?;
         step(self, &mut steps, "MENU > Bag", opened, "", None);
@@ -503,28 +391,8 @@ impl Hunt {
             step(self, &mut steps, "the bag closed", closed, "", None);
         }
 
-        // Save, from the MENU, once (no waiting out the game's cooldown: "please wait" shows
-        // Save works as well as "successful"); its message clicked away. An encounter in first
-        // (the bag's closing lets them come): away from it, then the save
-        let away = |h: &mut Hunt, lay: &Layout| -> R<bool> {
-            let (_, now_lay) = h.look(Some(lay.mute));
-            if let Some(l) = &now_lay {
-                h.print("  debug: an encounter came in: away from it, then the save");
-                h.run_away(l, false, 0.25)?;
-            }
-            Ok(now_lay.is_some())
-        };
-        away(self, &lay)?;
-        self.save_wait = 0;
-        let mut saved = self.save_game(2.0)?;
-        if !saved && self.save_wait == 0 && away(self, &lay)? {
-            saved = self.save_game(2.0)?;
-        }
-        let detail = if saved || self.save_wait == 0 { String::new() }
-                     else { format!("Save answered: wait {} s (saved a little while ago)", self.save_wait) };
-        step(self, &mut steps, "saving", saved || self.save_wait > 0, &detail, None);
-        self.save_wait = 0;
-        self.click(lay.pt(layout::AFK_SPOT))?; // the air: nothing left open
+        // Keep the next input away from any menu controls.
+        self.click(lay.pt(layout::AFK_SPOT))?; // leave focus in the game, outside menu controls
 
         let bad: Vec<&(String, bool, String)> = steps.iter().filter(|s| !s.1).collect();
         let summary = if bad.is_empty() {
