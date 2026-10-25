@@ -8,7 +8,7 @@ use crate::px::{Frame, Pt};
 use crate::reader::{self, bag_still, find_tab, is_count, search_box, TextHit};
 use crate::rules::{field_ok, norm, same_mon, same_word, Enc};
 use crate::util::{lower_first, now};
-use crate::vision::{self, box_visible, chat_showing, favorited, find_use_button, menu_ready};
+use crate::vision::{self, box_visible, chat_showing, find_use_button, menu_ready};
 use serde_json::Value;
 
 /// Scrolling the backpack's list (phones, when its search box can't be typed
@@ -60,15 +60,13 @@ impl Hunt {
 
     /// Bag -> tab -> item -> Use, and -> party member when the item asks for
     /// one. Favorited items sit at the top of their tab; anything else is
-    /// searched for (scrolled to on a phone that can't type). prefer: used
-    /// instead, if it's a favorite there. The name of what was used; None on
-    /// failure (the backpack is closed again). in_battle false: the bag is
+    /// searched for (scrolled to on a phone that can't type). The name of
+    /// what was used; None on failure (the backpack is closed again). in_battle false: the bag is
     /// opening from the MENU already (restore_pp).
-    pub(crate) fn use_item(&mut self, lay: &Layout, tab: &str, item: &str, target: Option<&str>, prefer: Option<&str>,
-                           in_battle: bool) -> R<Option<String>> {
+    pub(crate) fn use_item(&mut self, lay: &Layout, tab: &str, item: &str, target: Option<&str>, in_battle: bool) -> R<Option<String>> {
         // the bag's search box would bring up the keyboard, which on a phone covers the list
         self.dev.keyboard_hidden(true);
-        let r = self.use_item_in(lay, tab, item, target, prefer, in_battle);
+        let r = self.use_item_in(lay, tab, item, target, in_battle);
         self.dev.keyboard_hidden(false);
         let r = r?;
         if let Some(used) = &r {
@@ -77,10 +75,9 @@ impl Hunt {
         Ok(r)
     }
 
-    fn use_item_in(&mut self, lay: &Layout, tab: &str, item: &str, target: Option<&str>, prefer: Option<&str>,
-                   in_battle: bool) -> R<Option<String>> {
+    fn use_item_in(&mut self, lay: &Layout, tab: &str, item: &str, target: Option<&str>, in_battle: bool) -> R<Option<String>> {
         let phone = self.traits.phone;
-        let mut item = item.to_string();
+        let item = item.to_string();
         if in_battle {
             self.ensure_battle(lay)?;
             self.trace(&format!("bag: opening it for {item}"));
@@ -91,8 +88,6 @@ impl Hunt {
         let v = lay.v(); // screen px per reference px, down
         let (mut step, mut row_y, mut tab_at, mut searched) = ("tab", 0.0, 0.0, false);
         let (mut picked_at, mut picks) = (0.0, 0);
-        // prefer: looked for on the list first, then searched for; decided once ("done")
-        let mut looking = if prefer.is_some_and(|p| norm(p) != norm(&item)) { "look" } else { "done" };
         let mut texts: Vec<TextHit> = Vec::new();
         let mut img: Option<Frame> = None;
         let mut end = now() + 12.0;
@@ -145,8 +140,7 @@ impl Hunt {
             }
             if step == "tab" {
                 // the bag opens on the tab it was left on: the item in sight there, no click
-                let names: Vec<String> = [Some(item.as_str()), prefer].into_iter().flatten().map(norm).collect();
-                if texts.iter().any(|t| names.contains(&norm(&t.text)) && t.x < split) {
+                if texts.iter().any(|t| norm(&t.text) == norm(&item) && t.x < split) {
                     self.trace(&format!("bag: {item} is in sight already"));
                     (step, tab_at) = ("item", now()); // (and on with this read)
                 } else {
@@ -162,25 +156,6 @@ impl Hunt {
                 }
             }
             if step == "item" {
-                if looking != "done" {
-                    // favorites are at the top: prefer if it's one of those in sight, else item (never
-                    // searched for: a search empties the list of the favorites that are there)
-                    let p = prefer.unwrap_or("");
-                    let mut rows: Vec<f64> = texts.iter().filter(|t| same_word(p, &t.text) && t.x < split).map(|t| t.y).collect();
-                    rows.sort_by(f64::total_cmp);
-                    let listed = texts.iter().any(|t| is_count(&t.text));
-                    if let Some(&y) = rows.first() {
-                        if favorited(&f, &texts, y, lay) {
-                            self.print(&format!("  {p} is a favorite: throwing that instead of the {item}"));
-                            item = p.to_string();
-                        }
-                        looking = "done";
-                    } else if listed || now() - tab_at > 3.0 {
-                        looking = "done"; // not in sight (or no list read): item
-                    } else {
-                        continue; // the list isn't up yet
-                    }
-                }
                 // exact names: "Dive Ball" and "Dream Ball" are one misread apart
                 let row = texts.iter().filter(|t| norm(&t.text) == norm(&item) && t.x < split)
                     .min_by(|a, b| a.y.total_cmp(&b.y).then(a.x.total_cmp(&b.x))).cloned();
@@ -489,9 +464,6 @@ impl Hunt {
         self.pp_for.clear(); // out of PP was for the last battle: this one reads the moves again
         match self.catching(enc, f, lay, first_ball, &mut progress) {
             Err(Halt::BattleOver) => {
-                if progress.2 == "Park Ball" {
-                    return Ok(("caught".into(), "a Park Ball".into())); // it never misses: the battle ending is the catch
-                }
                 self.print("  the battle is over");
                 Ok(("over".into(), format!("{} ball(s), {} turns", progress.0, progress.1)))
             }
@@ -515,9 +487,6 @@ impl Hunt {
         let max_turns = cfg.num(if legendary { "legendary_max_turns" } else { "max_turns" }) as u32;
         let (mut balls, mut turns, mut drowsy, mut heals): (Vec<String>, u32, bool, u32) = (Vec::new(), 0, false, 0);
         let mut cur = enc.clone();
-        // the first ball is a Park Ball if one's favorited, in sight at the top of the
-        // Pokeballs tab (use_item's prefer): the one place a Park Ball is ever chosen
-        let mut park = Some("Park Ball".to_string());
         // A Repeat Ball only helps on species you've caught before (the little Poke Ball
         // icon); anything new gets new_ball instead.
         let new = if enc.owned { None } else { Some(cfg.str("new_ball")).filter(|b| !b.is_empty()) };
@@ -541,9 +510,8 @@ impl Hunt {
                                 if cur.status.is_empty() { "no status" } else { &cur.status },
                                 if drowsy { ", drowsy" } else { "" }));
             let mut ball: Option<String> = None;
-            if turns == 0 && (park.is_some() || !first.is_empty()) {
-                // unless a Park Ball is favorited
-                ball = Some(if !first.is_empty() { first.clone() } else { or_new(cfg.str("awake_ball")) });
+            if turns == 0 && !first.is_empty() {
+                ball = Some(first.clone());
             } else if hp.is_some_and(|h| h < cfg.catch.get("heal_below").and_then(Value::as_f64).unwrap_or(0.4)) && heals < 5
                 // read twice: one misread of "367/367" shouldn't spend a Full Restore
                 && { let again = self.grab(); self.own_hp(&again, &lay) }
@@ -551,7 +519,7 @@ impl Hunt {
             {
                 let item = cfg.str("heal_item");
                 self.trace(&format!("low HP: {item}"));
-                if self.use_item(&lay, "Recovers", &item, Some(&lead), None, true)?.is_none() {
+                if self.use_item(&lay, "Recovers", &item, Some(&lead), true)?.is_none() {
                     return Ok(("no bag".into(), format!("{item} failed")));
                 }
                 heals += 1;
@@ -576,9 +544,7 @@ impl Hunt {
             }
             let mut plain = None;
             if let Some(b) = ball.clone() {
-                if !timer.is_empty() && turns as f64 >= cfg.catch.get("timer_after").and_then(Value::as_f64).unwrap_or(9.0)
-                    && b != "Park Ball"
-                {
+                if !timer.is_empty() && turns as f64 >= cfg.catch.get("timer_after").and_then(Value::as_f64).unwrap_or(9.0) {
                     plain = Some(b);
                     ball = Some(timer.clone());
                 }
@@ -588,18 +554,17 @@ impl Hunt {
                     return Ok(("gave up".into(), format!("{} balls", balls.len())));
                 }
                 self.trace(&format!("throwing a {b} (#{})", balls.len() + 1));
-                let mut used = self.use_item(&lay, "Pokeballs", &b, None, park.as_deref(), true)?;
+                let mut used = self.use_item(&lay, "Pokeballs", &b, None, true)?;
                 if used.is_none() {
                     if let Some(p) = plain.take() {
                         self.trace(&format!("no {b} to throw: {p}s from now on"));
                         timer.clear();
                         b = p;
-                        used = self.use_item(&lay, "Pokeballs", &b, None, park.as_deref(), true)?;
+                        used = self.use_item(&lay, "Pokeballs", &b, None, true)?;
                     }
                 }
                 let Some(used) = used else { return Ok(("no bag".into(), format!("{b} failed"))) };
                 balls.push(used.clone());
-                park = None;
                 *progress = (balls.len(), turns, used);
             }
             let (outcome, img, l, msgs) = self.wait_turn(&lay)?;
@@ -614,9 +579,6 @@ impl Hunt {
                 }
             }
             let details = format!("{} ball(s), last {}, {turns} turns", balls.len(), balls.last().map(|s| s.as_str()).unwrap_or("-"));
-            if balls.last().is_some_and(|b| b == "Park Ball") && (outcome == "caught" || outcome == "over") {
-                return Ok(("caught".into(), "a Park Ball".into())); // it never misses: the battle ending is the catch
-            }
             let Some(img) = img.filter(|_| outcome == "turn") else { return Ok((outcome.into(), details)) };
             f = img;
             if msgs.iter().any(|m| m.to_lowercase().contains("fell asleep")) {
@@ -816,7 +778,7 @@ impl Hunt {
             self.c.publish();
             let mut error = String::new();
             let done = match what.as_str() {
-                "ball" => cfg.web_balls().contains(&name) && self.use_item(&lay, "Pokeballs", &name, None, None, true)?.is_some(),
+                "ball" => cfg.web_balls().contains(&name) && self.use_item(&lay, "Pokeballs", &name, None, true)?.is_some(),
                 "move" => match self.use_move(&lay, &name)? {
                     "used" => {
                         let seen = self.move_pp.take();
@@ -849,7 +811,7 @@ impl Hunt {
                 },
                 "heal" => {
                     let lead = self.c.web.lock().unwrap().lead.name.clone();
-                    self.use_item(&lay, "Recovers", &cfg.str("heal_item"), Some(&lead), None, true)?.is_some()
+                    self.use_item(&lay, "Recovers", &cfg.str("heal_item"), Some(&lead), true)?.is_some()
                 }
                 "pp" => {
                     // no PP item (the game's glitched with it): balls for the rest of this battle

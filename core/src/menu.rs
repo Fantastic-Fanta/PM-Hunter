@@ -341,7 +341,7 @@ impl Hunt {
         let ball = Some(cfg.str("first_ball")).filter(|b| !b.is_empty()).unwrap_or_else(|| "Quick Ball".into());
         let mut lay = lay.clone();
         let battle = (|| -> R<()> {
-            let used = self.use_item(&lay, "Pokeballs", &ball, None, None, true)?;
+            let used = self.use_item(&lay, "Pokeballs", &ball, None, true)?;
             step(self, &mut steps, &format!("throwing a {ball}"), used.is_some(), "", None);
             let mut outcome = "turn";
             if used.is_some() {
@@ -382,7 +382,7 @@ impl Hunt {
                      if fav { "" } else { "favorite it in the bag (right click)" }, None);
             }
             for item in [&heal, &pp] {
-                let used = self.use_item(&lay, "Recovers", item, Some(&target), None, false)?;
+                let used = self.use_item(&lay, "Recovers", item, Some(&target), false)?;
                 let said = if used.is_some() { self.back_to_bag(8.0)? } else { String::new() };
                 let who = if target.is_empty() { "?" } else { &target };
                 step(self, &mut steps, &format!("a {item} on {who}"), used.is_some(), &said, None);
