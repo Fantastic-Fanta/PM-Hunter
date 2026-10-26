@@ -32,10 +32,10 @@ pub fn catch_plan() -> Map<String, Value> {
     json!({
         "first_ball": "Quick Ball", "sleep_move": "Yawn", "guard_move": "Protect",
         "asleep_ball": "Repeat Ball", "awake_ball": "Repeat Ball", "new_ball": "Dive Ball",
-        "max_balls": 8,
+        "max_balls": 6767,
         // x1 + 0.3 for each turn passed (x4 at most): past a Repeat Ball's x3.5 once 9 turns have gone by
         "timer_ball": "Timer Ball", "timer_after": 9,
-        "max_turns": 30, "legendary_max_balls": 30, "legendary_max_turns": 90,
+        "max_turns": 6767, "legendary_max_balls": 6767, "legendary_max_turns": 6767,
         "heal_below": 0.4, "heal_item": "Full Restore",
         "pp_item": "Max Elixir", "on_fail": "hold",
         "sleep_with": "Clodsire"  // the lead that knows Yawn and Protect; others just throw balls
@@ -170,7 +170,7 @@ mod tests {
         assert_eq!(c.webhook, "https://x");
         assert!(c.targets.is_empty());
         assert_eq!(c.notify, vec![auto_catch()]);
-        assert_eq!(c.num("max_balls"), 8.0);
+        assert_eq!(c.num("max_balls"), 6767.0);
         assert_eq!(Config::parse("not json").unwrap().webhook, "");
     }
 
@@ -179,7 +179,10 @@ mod tests {
         let c = Config::parse(r#"{"webhook": "", "targets": [], "notify": []}"#).unwrap();
         assert_eq!(c.notify, vec![auto_catch()]);
         assert_eq!(c.str("first_ball"), "Quick Ball");
-        assert_eq!(c.num("max_balls"), 8.0);
+        assert_eq!(c.num("max_balls"), 6767.0);
+        assert_eq!(c.num("max_turns"), 6767.0);
+        assert_eq!(c.num("legendary_max_balls"), 6767.0);
+        assert_eq!(c.num("legendary_max_turns"), 6767.0);
     }
 
     #[test]
