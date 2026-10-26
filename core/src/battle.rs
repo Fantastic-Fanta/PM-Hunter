@@ -62,11 +62,22 @@ impl Hunt {
     /// one. Favorited items sit at the top of their tab; anything else is
     /// searched for (scrolled to on a phone that can't type). The name of
     /// what was used; None on failure (the backpack is closed again). in_battle false: the bag is
-    /// opening from the MENU already (restore_pp).
+    /// opening from the MENU already (restore_pp). In battle it's tried three times, the bag
+    /// opened afresh each time: a bag that wouldn't read once never costs the catch.
     pub(crate) fn use_item(&mut self, lay: &Layout, tab: &str, item: &str, target: Option<&str>, in_battle: bool) -> R<Option<String>> {
         // the bag's search box would bring up the keyboard, which on a phone covers the list
         self.dev.keyboard_hidden(true);
-        let r = self.use_item_in(lay, tab, item, target, in_battle);
+        let mut r = Ok(None);
+        for attempt in 1..=(if in_battle { 3 } else { 1 }) {
+            if attempt > 1 {
+                self.trace(&format!("bag: trying again for the {item} ({attempt} of 3)"));
+                self.nap(0.6)?; // (it's closing)
+            }
+            r = self.use_item_in(lay, tab, item, target, in_battle);
+            if !matches!(r, Ok(None)) {
+                break;
+            }
+        }
         self.dev.keyboard_hidden(false);
         let r = r?;
         if let Some(used) = &r {
@@ -94,6 +105,7 @@ impl Hunt {
         let opened_at = now();
         let (mut missing, mut reopened) = (0, false);
         let mut tab_hit: Option<TextHit> = None;
+        let mut no_tab_since: Option<f64> = None; // the bag still, and no tab to be found
         let mut last_row_y: Option<f64> = None; // (phones) where the row was on the screenshot before
         let mut last_title: Option<TextHit> = None;
         let mut scroll = Scroll::default();
@@ -151,6 +163,9 @@ impl Hunt {
                         self.click(hit.pt())?;
                         (step, tab_at) = ("item", now());
                         tab_hit = Some(hit);
+                    } else if now() - *no_tab_since.get_or_insert(now()) > 5.0 {
+                        self.trace(&format!("bag: no {tab} tab in 5 s"));
+                        break; // (closed, and opened afresh)
                     }
                     continue;
                 }
