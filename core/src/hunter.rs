@@ -349,6 +349,8 @@ pub struct Hunt {
     pub(crate) cal_file: std::path::PathBuf,
     pub(crate) last_click: f64,
     pub(crate) pp_for: String,
+    /// What the text recognition saw in the enemy's box last (for the website's log).
+    pub(crate) box_read: String,
     pub(crate) menu_spots: Option<Map<String, Value>>,
     pub(crate) timing: Option<Timing>,
     timing_is_times: bool,
@@ -424,6 +426,7 @@ pub fn start(dev: Arc<dyn Device>, sink: Arc<dyn Sink>, debug: Arc<DebugChannel>
         cal_file: c.store.calibration_file(),
         last_click: now(),
         pp_for: String::new(),
+        box_read: String::new(),
         menu_spots: None,
         timing: None,
         timing_is_times: false,
@@ -710,8 +713,16 @@ impl Hunt {
     }
 
     /// The enemy's species, level, shiny, tint, reskin and gradient.
+    /// An encounter's reads, each, and what the box's text was on the last (the website's
+    /// log only: why it was taken for what it was).
+    fn log_reads(&self, reads: &[Enc]) {
+        let each: Vec<String> = reads.iter().map(|e| e.describe()).collect();
+        self.c.out.detail(&format!("    reads: {}; the box: {}", each.join(" / "), self.box_read));
+    }
+
     pub(crate) fn read_enemy(&mut self, f: &Frame, lay: &Layout) -> Enc {
         let texts = self.ocr(f, Some(lay.boxed(layout::BOX)), Self::zoom(lay));
+        let mut seen: Vec<String> = texts.iter().map(|t| format!("{:?}", t.text)).collect();
         let mut enc = reader::enemy(&texts);
         // the name, the first way it reads as a real Pokemon's (species.txt): the box made
         // bigger, as it is, then its row on its own (Windows: a light italic "Entei" gone from
@@ -736,15 +747,18 @@ impl Hunt {
             // (each kept only when it reads at least as much as the box did: "FLUID" alone
             // isn't "TOXIC FLUID")
             let r = self.row_text(f, lay, layout::RESKIN_ROW, &["x2", "far"]);
+            seen.push(format!("reskin row {r:?}"));
             if !r.is_empty() && r.chars().count() >= enc.reskin.chars().count() {
                 enc.reskin = r;
             }
             let g = self.row_text(f, lay, layout::GRADIENT_TAB, &["sat", "far"]);
+            seen.push(format!("gradient row {g:?}"));
             if !g.is_empty() && g.chars().count() >= enc.gradient.chars().count() {
                 enc.gradient = g;
             }
         }
         (enc.shiny, enc.tint, enc.owned) = vision::icons(f, lay);
+        self.box_read = seen.join(", ");
         enc
     }
 
@@ -888,6 +902,7 @@ impl Hunt {
                     self.trace(&format!("read: {d}{}", if got.is_some() { " (agrees: done)" } else { "" }));
                 }
                 if let Some(enc) = got {
+                    self.log_reads(&reads);
                     return Ok(Some(Read { enc, f, lay }));
                 }
                 // a name that never reads (missed every way, every time) doesn't hold it up: after
@@ -898,6 +913,7 @@ impl Hunt {
                     if now() - since > 4.0 {
                         if let Some(enc) = rules::settled_nameless(&reads) {
                             self.say(&format!("  (the name won't read: going by the rest, {})", enc.describe()));
+                            self.log_reads(&reads);
                             return Ok(Some(Read { enc, f, lay }));
                         }
                     }

@@ -51,7 +51,6 @@ jobs:
         env:
           VERSION: ${{ inputs.version || '0' }}
           NAME: ${{ inputs.name || 'test' }}
-          HUNT_DEBUG_WEBHOOK: ${{ env.PUBLISHED == 'true' && secrets.WINDOWS_DEBUG_WEBHOOK || '' }}
         run: |
           if (Test-Path target\release\Hunt.exe) { "Hunt.exe from a build with this code" }
           else {
