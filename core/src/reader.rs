@@ -255,15 +255,21 @@ fn tab_index(t: &str) -> Option<usize> {
 /// Where the backpack's tab is. On a small window or a phone the labels are
 /// tiny and some aren't read, or are misread ("TMB", "Heid Iterme"), but the
 /// tabs sit in a fixed order, evenly spaced: one that isn't read is worked out
-/// from the ones that are. The TextHit is made up in that case (its text the tab's).
+/// from the ones that are. With one read, or none (Windows read only "Z- Cry St. Is"
+/// in a small window, the bag left on TMs), from the "Backpack" title over them:
+/// the first tab is TAB_FIRST tab steps under it, the search box TAB_SEARCH (the
+/// bag's width doesn't say: it's squatter on some screens). The TextHit is made up
+/// in that case (its text the tab's).
 pub fn find_tab(texts: &[TextHit], want: &str, split: f64, width: u32) -> Option<TextHit> {
     let Some(i) = TABS.iter().position(|t| t.to_lowercase() == want.to_lowercase()) else {
         return texts.iter().find(|t| t.text.to_lowercase() == want.to_lowercase()).cloned();
     };
+    // (the list's heading is the open tab's name too: it's right of the title's middle, the tabs left)
+    let left = texts.iter().find(|t| norm(&t.text) == "backpack").map_or(split, |t| t.x.min(split));
     let hits: Vec<(usize, &TextHit)> =
-        texts.iter().filter(|t| t.x < split).filter_map(|t| tab_index(&t.text).map(|n| (n, t))).collect();
+        texts.iter().filter(|t| t.x < left).filter_map(|t| tab_index(&t.text).map(|n| (n, t))).collect();
     if hits.is_empty() {
-        return None;
+        return tab_from_title(texts, i, None, split);
     }
     let col = hits.iter().map(|h| h.1.x).fold(f64::INFINITY, f64::min); // the tab column; the list's heading is further right
     let in_col: Vec<&(usize, &TextHit)> = hits.iter().filter(|h| (h.1.x - col).abs() < 0.04 * width as f64).collect();
@@ -274,7 +280,7 @@ pub fn find_tab(texts: &[TextHit], want: &str, split: f64, width: u32) -> Option
     kinds.sort();
     kinds.dedup();
     if kinds.len() < 2 {
-        return None;
+        return tab_from_title(texts, i, Some(in_col[0]), split);
     }
     let n: Vec<f64> = in_col.iter().map(|h| h.0 as f64).collect();
     let y: Vec<f64> = in_col.iter().map(|h| h.1.y).collect();
@@ -286,6 +292,29 @@ pub fn find_tab(texts: &[TextHit], want: &str, split: f64, width: u32) -> Option
     xs.sort_by(f64::total_cmp);
     let mid = if xs.len() % 2 == 1 { xs[xs.len() / 2] } else { (xs[xs.len() / 2 - 1] + xs[xs.len() / 2]) / 2.0 };
     Some(TextHit::new(TABS[i], mid, my + step * (i as f64 - mn)))
+}
+
+// samples/bag-open.png: "Backpack" at y 287, the tabs at 418 + 75.3 n (x 490, the title's 527),
+// the search box at 390
+const TAB_FIRST: f64 = 131.0 / 75.3;
+const TAB_SEARCH: f64 = 103.0 / 75.3;
+const TAB_X: f64 = -37.0 / 75.3;
+
+/// Tab i from the bag's title and one tab that was read, or (none read) the search box.
+fn tab_from_title(texts: &[TextHit], i: usize, read: Option<&(usize, &TextHit)>, split: f64) -> Option<TextHit> {
+    let title = texts.iter().find(|t| norm(&t.text) == "backpack")?;
+    let (step, x) = match read {
+        Some((k, t)) => ((t.y - title.y) / (TAB_FIRST + *k as f64), t.x),
+        None => {
+            let close = texts.iter().find(|t| t.is("close") && t.x > split)?;
+            let room = 0.2 * (close.x - title.x); // (the search box is just under Close, above the list)
+            let search = texts.iter().filter(|t| t.x > split && t.y > close.y + 5.0 && t.y - close.y < room && !is_count(&t.text))
+                .min_by(|a, b| a.y.total_cmp(&b.y))?;
+            let step = (search.y - title.y) / TAB_SEARCH;
+            (step, title.x + TAB_X * step)
+        }
+    };
+    (step > 0.0).then(|| TextHit::new(TABS[i], x, title.y + step * (TAB_FIRST + i as f64)))
 }
 
 /// The bag's search box: just under Close, whatever it shows ("Search", "QUICK
@@ -420,6 +449,23 @@ mod tests {
         let t = find_tab(&texts, "Pokeballs", 500.0, 2000).unwrap();
         assert_eq!((t.x.round(), t.y.round()), (101.0, 250.0));
         assert_eq!(find_tab(&texts, "Recovers", 500.0, 2000).unwrap().y, 200.0);
+    }
+
+    #[test]
+    fn tabs_from_the_title() {
+        // a friend's Windows PC, the bag left on TMs: of the tabs only "Z- Cry St. Is" read
+        // (Pokeballs is at (314, 271), the tabs 44.7 px apart)
+        let mut texts = vec![hit("Backpack", 333.0, 148.0), hit("Close", 937.0, 148.0), hit("TMs", 380.0, 210.0),
+                             hit("Search...", 1000.0, 209.0), hit("Aerial Ace", 494.0, 266.0), hit("Blizzard", 486.0, 316.0),
+                             hit("Z- Cry St. Is", 314.0, 539.0)];
+        let t = find_tab(&texts, "Pokeballs", 700.0, 1280).unwrap();
+        assert!((t.x - 314.0).abs() < 4.0 && (t.y - 271.0).abs() < 4.0, "{t:?}");
+        // none read: the search box under Close
+        texts.pop();
+        let t = find_tab(&texts, "Pokeballs", 700.0, 1280).unwrap();
+        assert!((t.x - 314.0).abs() < 10.0 && (t.y - 271.0).abs() < 4.0, "{t:?}");
+        // no bag, no tab
+        assert!(find_tab(&texts[2..], "Pokeballs", 700.0, 1280).is_none());
     }
 
     #[test]
