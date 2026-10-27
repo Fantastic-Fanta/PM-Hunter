@@ -487,6 +487,13 @@ async def device_log(request):
         if not (isinstance(line, list) and len(line) == 3 and line[1] in LOG_KINDS):
             raise web.HTTPBadRequest(text="a line is [ms, kind, text]")
         rows.append((device, run, who, log_at(line[0]), line[1], log_text(line[2], 2000), ""))
+    # a batch sent again (its answer lost on the way back, so the Hunt kept it to resend):
+    # the lines already here aren't added twice
+    if rows:
+        ats = [r[3] for r in rows]
+        have = set(hub.db.execute("SELECT at, kind, text FROM logs WHERE device = ? AND run = ? AND at BETWEEN ? AND ?",
+                                  (device, run, min(ats), max(ats))).fetchall())
+        rows = [r for r in rows if (r[3], r[4], r[5]) not in have]
     hub.db.executemany("INSERT INTO logs (device, run, who, at, kind, text, shot) VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
     hub.db.commit()
     return web.json_response({})

@@ -27,6 +27,7 @@ pub const BAG: Pt = Pt::new(1206.0, 1070.0);
 pub const FIGHT: Pt = Pt::new(480.0, 1070.0);
 pub const MSG: IBox = IBox::new(300, 885, 1750, 1020); // battle text ("What should Clodsire do?")
 pub const PLAYER_BOX: IBox = IBox::new(1168, 685, 1680, 870); // your Pokemon's box, HP "350 / 376"
+pub const HP_BAR: IBox = IBox::new(1353, 784, 1655, 806); // inside your Pokemon's HP bar (its outline left out)
 pub const BAG_SPLIT: f64 = 1100.0; // bag rows' names are left of this, the search box right
 pub const BAG_TAG: (f64, f64) = (1320.0, 1380.0); // across: inside a bag row's count tag, left of its "x985"
 pub const AFK_SPOT: Pt = Pt::new(150.0, 800.0); // black margin left of the game, below the chat window

@@ -209,7 +209,9 @@ impl DebugChannel {
 
     /// A line the hunter said ("problem" when it says something went wrong).
     pub fn note(&self, text: &str) {
-        self.add(if FAILURE.is_match(text) { "problem" } else { "line" }, text);
+        // (what the battle said is the game's: "But it failed!" is no problem of the hunter's)
+        let own = text.split(". The battle said:").next().unwrap_or(text);
+        self.add(if FAILURE.is_match(own) { "problem" } else { "line" }, text);
     }
 
     /// A line for the log only (not the hunter's own): how an encounter was read.

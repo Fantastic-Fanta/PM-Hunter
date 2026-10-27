@@ -52,6 +52,8 @@ re!(PP, r"(\d+)\s*(?:[/|Il\\]|\s)\s*(\d+)");
 re!(SHOULD, r"should (.+?) do");
 re!(SENT_TO, r"sent to (the )?(pc|box)");
 re!(TARGET_CUT, r"(?i)\s+-\s+|\s+lv");
+re!(WILD_FAINTED, r"(?i)\bwild\b.*\bfainted");
+re!(WILD_STATUSED, r"(?i)\bwild\b.*\b(was (badly )?poisoned|hurt by (the )?poison|was burned|hurt by its burn|is paralyzed|was paralyzed|was frozen)");
 
 pub const STATUSES: [&str; 6] = ["SLP", "PSN", "PAR", "BRN", "FRZ", "TOX"];
 
@@ -235,9 +237,11 @@ pub fn has_digit(t: &str) -> bool {
 
 /// Your Pokemon's HP as a fraction, from the text in its box.
 pub fn hp(text: &str) -> Option<f64> {
-    let m = HP_SLASH.captures(text)?;
-    let (hp, max): (f64, f64) = (m[1].parse().ok()?, m[2].parse().ok()?);
-    (max > 0.0).then(|| hp / max)
+    // the last "a / b" with a <= b ("Lv. 129 412/415" isn't 129/415): anything else is a misread
+    HP_SLASH.captures_iter(text).filter_map(|m| {
+        let (hp, max): (f64, f64) = (m[1].parse().ok()?, m[2].parse().ok()?);
+        (max > 0.0 && hp <= max).then(|| hp / max)
+    }).last()
 }
 
 /// "What should Clodsire do?" -> "Clodsire"
@@ -328,6 +332,20 @@ pub fn search_box(texts: &[TextHit], split: f64, v: f64) -> Option<Pt> {
         .map(|t| t.pt())
 }
 
+/// A search left in the bag's search box ("Dive Ball", typed by an older Hunt): the text
+/// in the box, under the "Backpack" title and above the list's rows, that isn't its
+/// "Search..." placeholder.
+pub fn search_leftover(texts: &[TextHit], split: f64, v: f64) -> Option<TextHit> {
+    let title = bag_title(texts)?.y;
+    let rows = texts.iter().filter(|t| is_count(&t.text)).map(|t| t.y).fold(f64::INFINITY, f64::min);
+    texts.iter()
+        .filter(|t| t.x > split && t.y > title + 25.0 * v && t.y < rows - 20.0 * v && !is_count(&t.text)
+            && !close_word(t) && two_letters(&t.text))
+        .min_by(|a, b| a.y.total_cmp(&b.y))
+        .filter(|t| !norm(&t.text).starts_with("search"))
+        .cloned()
+}
+
 /// The bag's stopped moving (it floats up as it opens): its "Backpack" title
 /// read in this read and the one before, in the same place.
 pub fn bag_still(texts: &[TextHit], before: &[TextHit]) -> bool {
@@ -374,6 +392,43 @@ pub fn menu_button(hit: Pt, texts: &[TextHit], retry: bool) -> Pt {
 pub fn caught_said(msg: &str) -> bool {
     let m = msg.to_lowercase();
     m.contains("was caught") || m.contains("gotcha") || m.contains("added to the party") || SENT_TO.is_match(&m)
+}
+
+/// "The wild Giratina fainted!" (its poison, say): the battle's over, nothing caught.
+pub fn wild_fainted(msg: &str) -> bool {
+    WILD_FAINTED.is_match(msg)
+}
+
+/// "The wild Giratina was poisoned!", "... was hurt by poison!": it has a status, whether
+/// or not its badge is read (Yawn can't work on it).
+pub fn wild_statused(msg: &str) -> bool {
+    WILD_STATUSED.is_match(msg)
+}
+
+/// The Pokemon Party screen: in battle "Choose a Pokemon to use Full Restore on." (or
+/// "Choose your next Pokemon." when yours fainted), outside one "Select a pokemon to heal".
+pub fn party_up(texts: &[TextHit]) -> bool {
+    texts.iter().any(|t| {
+        let l = t.text.to_lowercase();
+        l.starts_with("choose a pokemon") || l.starts_with("select a pokemon") || l.starts_with("pokemon party")
+            || l.starts_with("choose your next")
+    })
+}
+
+/// Your Pokemon fainted: "Choose your next Pokemon."
+pub fn next_asked(texts: &[TextHit]) -> bool {
+    texts.iter().any(|t| t.text.to_lowercase().starts_with("choose your next"))
+}
+
+/// The backpack is open: its "Backpack" title.
+pub fn bag_title(texts: &[TextHit]) -> Option<&TextHit> {
+    texts.iter().find(|t| norm(&t.text) == "backpack")
+}
+
+/// A Close button's word, whole or in the pieces some PCs read it as ("C", "e", "lose").
+pub fn close_word(t: &TextHit) -> bool {
+    let l = t.text.to_lowercase();
+    l == "close" || ["lose", "clos", "ciose", "c1ose", "cl0se", "close."].contains(&l.as_str())
 }
 
 /// The party screen's card for target: "Clodsire - Lv. 109".

@@ -12,12 +12,18 @@ use crate::vision::{self, box_visible, chat_showing, find_use_button, menu_ready
 use serde_json::Value;
 
 /// Scrolling the backpack's list (phones, when its search box can't be typed
-/// into): first to the top, then down a page at a time until the page stops
-/// changing. The list's height is taken from the tab buttons beside it.
+/// into; a PC always, with the mouse wheel): first to the top, then down a page at
+/// a time until the page stops changing. The list's height is taken from the tab
+/// buttons beside it.
 #[derive(Default)]
 pub(crate) struct Scroll {
     pub at: f64,
     at_top: bool,
+    /// (PC) wheel notches a page: more when a page barely moved, fewer when one skipped rows.
+    notches: i32,
+    /// (PC) wheel turns up so far, and whether the last turn was back up over skipped rows.
+    ups: u32,
+    backed: bool,
     last: Option<Vec<String>>,
     pages: u32,
 }
@@ -26,15 +32,99 @@ impl Hunt {
     /// Waits for the Fight / Bag / Run menu; a battle that's over is
     /// Halt::BattleOver (out of battle the Bag button's spot is somewhere else).
     pub(crate) fn ensure_battle(&mut self, lay: &Layout) -> R<()> {
-        let end = now() + 4.0;
+        let (start, mut end, mut looked) = (now(), now() + 4.0, 0.0);
         while now() < end {
             let (f, cur) = self.look(Some(lay.mute));
-            if cur.is_some_and(|cur| menu_ready(&f, &cur)) {
+            if cur.as_ref().is_some_and(|cur| menu_ready(&f, cur)) {
                 return Ok(());
+            }
+            // the backpack or the party screen still over it (a Full Restore's party screen
+            // closed, its backpack left open) hides the battle: closed, not taken for its end
+            if cur.is_none() && now() - looked > 0.8 {
+                looked = now();
+                if self.close_screens(5.0)? {
+                    end = end.max(now() + 4.0).min(start + 20.0);
+                    continue;
+                }
             }
             self.nap(self.traits.poll)?;
         }
         Err(Halt::BattleOver)
+    }
+
+    /// Closes what's over the game: the Pokemon Party screen (its Close), then the backpack
+    /// (its Close, by its red pill when the word isn't read); "Choose your next Pokemon."
+    /// gets the next one sent out. True if anything was there.
+    pub(crate) fn close_screens(&mut self, seconds: f64) -> R<bool> {
+        let (end, mut any) = (now() + seconds, false);
+        let mut title_before: Option<Pt> = None;
+        while now() < end {
+            let f = self.grab();
+            let texts = self.screen_texts(&f);
+            if reader::next_asked(&texts) {
+                any = true;
+                // a card clicked may ask what for: "Send out" (or "Switch", "Shift")
+                let send = texts.iter().find(|t| {
+                    let l = norm(&t.text);
+                    l == "sendout" || l == "switch" || l == "shift"
+                });
+                if let Some(b) = send {
+                    self.trace(&format!("sending it out: \"{}\"", b.text));
+                    self.click(b.pt())?;
+                } else if !self.send_next(&f)? {
+                    break;
+                }
+            } else if reader::party_up(&texts) {
+                any = true;
+                // its Close sits right of the message, at the bottom; worked out from there only
+                // while its cards are in sight (that spot is Run's once it's gone)
+                let (w, h) = (f.width() as f64, f.height() as f64);
+                let at = texts.iter().filter(|t| reader::close_word(t) && t.y > 0.6 * h).map(|t| t.pt()).next()
+                    .or_else(|| (!vision::party_cards(&f).is_empty()).then(|| Pt::new(0.80 * w, 0.89 * h)));
+                let Some(at) = at else { break };
+                self.trace("closing the Pokemon Party screen");
+                self.click(at)?;
+            } else if let Some(title) = reader::bag_title(&texts).cloned() {
+                any = true;
+                // only once it holds still (a closing bag's title still reads as it slides away)
+                let still = title_before.is_some_and(|b| (b.x - title.x).abs() + (b.y - title.y).abs() <= 4.0);
+                title_before = Some(title.pt());
+                if !still {
+                    self.nap(0.25)?;
+                    continue;
+                }
+                let row = (f.height() as f64) / 12.0;
+                let at = texts.iter().filter(|t| reader::close_word(t) && t.x > title.x && (t.y - title.y).abs() < row)
+                    .map(|t| t.pt()).next().or_else(|| vision::bag_close(&f, title.pt()));
+                let Some(at) = at else {
+                    self.trace("the backpack is open and its Close isn't found");
+                    break;
+                };
+                self.trace("closing the backpack");
+                self.click(at)?;
+                title_before = None;
+            } else {
+                break;
+            }
+            self.move_mouse(Pt::new(f.width() as f64 * 0.06, f.height() as f64 * 0.7))?; // (off its buttons)
+            self.nap(0.9)?;
+        }
+        Ok(any)
+    }
+
+    /// Yours fainted ("Choose your next Pokemon."): the first card that hasn't, sent out.
+    /// False if there's none.
+    pub(crate) fn send_next(&mut self, f: &Frame) -> R<bool> {
+        let cards = vision::party_cards(f);
+        let Some(next) = cards.iter().find(|c| !c.1).map(|c| c.0) else {
+            self.say("  (every Pokemon has fainted)");
+            return Ok(false);
+        };
+        self.say(&format!("  yours fainted: sending in the next one (card {} of {})",
+                          cards.iter().position(|c| c.0 == next).unwrap_or(0) + 1, cards.len()));
+        self.click(next.center())?;
+        self.nap(1.0)?;
+        Ok(true)
     }
 
     /// A click in a text box (the bag's search), a moment for Roblox to give it
@@ -49,13 +139,6 @@ impl Hunt {
         }
         self.nap(0.3)?;
         Ok(typed)
-    }
-
-    fn close_bag(&mut self, texts: &[TextHit]) -> R<()> {
-        if let Some(t) = texts.iter().find(|t| t.is("close")) {
-            self.click(t.pt())?;
-        }
-        Ok(())
     }
 
     /// Bag -> tab -> item -> Use, and -> party member when the item asks for
@@ -73,9 +156,10 @@ impl Hunt {
                 self.trace(&format!("bag: trying again for the {item} ({attempt} of 3)"));
                 self.nap(0.6)?; // (it's closing)
             }
+            self.not_in_bag.clear();
             r = self.use_item_in(lay, tab, item, target, in_battle);
-            if !matches!(r, Ok(None)) {
-                break;
+            if !matches!(r, Ok(None)) || self.not_in_bag == item {
+                break; // (one the bag hasn't got isn't looked for again)
             }
         }
         self.dev.keyboard_hidden(false);
@@ -98,7 +182,7 @@ impl Hunt {
         let split = lay.xy(layout::BAG_SPLIT, 0.0).x;
         let v = lay.v(); // screen px per reference px, down
         let (mut step, mut row_y, mut tab_at, mut searched) = ("tab", 0.0, 0.0, false);
-        let (mut picked_at, mut picks) = (0.0, 0);
+        let (mut picked_at, mut picks, mut cleared) = (0.0, 0, false);
         let mut texts: Vec<TextHit> = Vec::new();
         let mut img: Option<Frame> = None;
         let mut end = now() + 12.0;
@@ -194,9 +278,10 @@ impl Hunt {
                     self.click(spot)?;
                     self.move_mouse(lay.pt(layout::AFK_SPOT))?;
                     (step, picked_at) = ("use", now());
-                } else if !searched && now() - tab_at > 1.5 {
+                } else if phone && !searched && now() - tab_at > 1.5 {
                     last_row_y = None;
-                    // not a favorite: type it into the tab's search box
+                    // not a favorite: type it into the tab's search box (phones only: a PC never
+                    // types a search, its list is scrolled with the wheel)
                     let b = search_box(&texts, split, v).or_else(|| self.search_box_below_close(&texts, split, v));
                     searched = true;
                     if let Some(b) = b {
@@ -207,20 +292,37 @@ impl Hunt {
                             tab_at = now();
                         }
                     }
-                } else if phone && searched && now() - tab_at > 1.5 && now() > scroll.at {
+                } else if (searched || !phone) && now() - tab_at > 1.5 && now() > scroll.at {
                     last_row_y = None;
                     // not in sight: scroll the list, top to bottom
                     if scroll.pages == 0 && !scroll.at_top {
-                        if let Some(t) = texts.iter().find(|t| {
-                            t.x > split && t.text == t.text.to_uppercase() && reader::two_letters(&t.text)
-                                && !t.is("close") && !is_count(&t.text)
-                        }) {
-                            let shows = t.text.clone();
-                            self.say(&format!("  (the bag's search box says \"{shows}\": clear it in Roblox, it hides the rest)"));
+                        if phone {
+                            if let Some(t) = texts.iter().find(|t| {
+                                t.x > split && t.text == t.text.to_uppercase() && reader::two_letters(&t.text)
+                                    && !t.is("close") && !is_count(&t.text)
+                            }) {
+                                let shows = t.text.clone();
+                                self.say(&format!("  (the bag's search box says \"{shows}\": clear it in Roblox, it hides the rest)"));
+                            }
+                        } else if let Some(t) = reader::search_leftover(&texts, split, v).filter(|_| !cleared) {
+                            // a search left in the box (an older Hunt typed "Dive Ball") hides the rest
+                            // of the list: emptied, nothing typed
+                            cleared = true;
+                            self.trace(&format!("bag: the search box says \"{}\": emptying it", t.text));
+                            self.type_in(t.pt(), "")?;
+                            self.move_mouse(lay.pt(layout::AFK_SPOT))?;
+                            tab_at = now();
+                            continue;
                         }
                     }
                     if !self.scroll_bag(&mut scroll, tab_hit.as_ref(), &texts, split)? {
-                        self.trace(&format!("bag: looked through {tab}, no {item}"));
+                        if scroll.at_top {
+                            // (looked all through it: not when the list couldn't be scrolled at all)
+                            self.trace(&format!("bag: looked through {tab}, no {item}"));
+                            self.not_in_bag = item.clone();
+                        } else {
+                            self.trace(&format!("bag: {item} isn't in sight and the list couldn't be scrolled"));
+                        }
                         break;
                     }
                     end = end.max(now() + 4.0); // scrolling takes a while
@@ -264,8 +366,12 @@ impl Hunt {
                 });
                 let target = target.unwrap_or("");
                 if party {
-                    if let Some(hit) = texts.iter().find(|t| reader::is_target(target, &t.text)).map(|t| t.pt()) {
-                        self.trace(&format!("bag: {item} on {target}"));
+                    // by its name; read as "sire" (the big white names on light blue), the first
+                    // card that hasn't fainted: the one out in battle, the lead outside one
+                    let card = || vision::party_cards(&f).into_iter().find(|c| !c.1).map(|c| c.0.center());
+                    let named = texts.iter().find(|t| reader::is_target(target, &t.text)).map(|t| t.pt());
+                    if let Some(hit) = named.or_else(card) {
+                        self.trace(&format!("bag: {item} on {target}{}", if named.is_none() { " (its card, the first)" } else { "" }));
                         self.click(hit)?;
                         if in_battle {
                             // on a Pokemon that doesn't need it (its HP misread): "It won't have any
@@ -297,7 +403,13 @@ impl Hunt {
         let read = texts.iter().map(|t| t.text.as_str()).collect::<Vec<_>>().join(", ");
         let shot = img.as_ref().map(|f| self.snapshot(f, "bag")).unwrap_or_else(|| "-".into());
         self.say(&format!("  (couldn't use {item}: {shot}, text read: {})", crate::util::clip(&read, 300)));
-        self.close_bag(&texts)?;
+        if in_battle {
+            // the party screen and the backpack under it, both (one Close left the backpack
+            // open, the battle hidden, taken for over)
+            self.close_screens(5.0)?;
+        } else if let Some(t) = texts.iter().find(|t| t.is("close")) {
+            self.click(t.pt())?; // (the MENU's bag stays for the next item)
+        }
         Ok(None)
     }
 
@@ -331,6 +443,9 @@ impl Hunt {
         }
         let x = (tab.x + split) / 2.0;
         let (up, down) = (top + 0.3 * (bottom - top), top + 0.8 * (bottom - top));
+        if !self.traits.phone {
+            return self.wheel_bag(s, Pt::new(x, (top + bottom) / 2.0), texts, tab, split);
+        }
         if !s.at_top {
             self.trace("bag: not in sight, scrolling to the top");
             for _ in 0..3 {
@@ -360,6 +475,63 @@ impl Hunt {
             self.swipe(Pt::new(x, down), Pt::new(x, up), 0.7)?; // slow: about half a page, no fling
         }
         s.at = now() + 0.8; // look again once it has settled
+        Ok(true)
+    }
+
+    /// scroll_bag on a PC: the wheel over the list, up till the page stops changing (the
+    /// top), then down a page at a time: a few notches, more while a page barely moves,
+    /// back up and fewer when one shares no row with the page before (rows skipped). The
+    /// same page twice is the bottom.
+    fn wheel_bag(&mut self, s: &mut Scroll, over: Pt, texts: &[TextHit], tab: &TextHit, split: f64) -> R<bool> {
+        // the list's rows: names on a row with a count ("x985"), not the tab's heading above
+        let counts: Vec<f64> = texts.iter().filter(|t| is_count(&t.text) && t.x > split).map(|t| t.y).collect();
+        let gap = 0.5 * counts.windows(2).map(|w| (w[1] - w[0]).abs()).fold(f64::INFINITY, f64::min).min(60.0);
+        let mut rows: Vec<String> = texts.iter()
+            .filter(|t| t.x > tab.x + 0.15 * (split - tab.x) && t.x < split && counts.iter().any(|y| (y - t.y).abs() < gap))
+            .map(|t| norm(&t.text)).filter(|t| t.len() > 2).collect();
+        rows.sort();
+        rows.dedup();
+        if !s.at_top {
+            if s.ups == 0 || s.last.as_ref() != Some(&rows) {
+                if s.ups < 8 {
+                    self.trace("bag: not in sight, scrolling the list to the top");
+                    s.ups += 1;
+                    s.last = Some(rows);
+                    self.wheel(over, 40)?;
+                    s.at = now() + 0.6;
+                    return Ok(true);
+                }
+            }
+            (s.at_top, s.notches, s.last) = (true, 3, None);
+        }
+        if let Some(before) = &s.last {
+            if !s.backed && (rows.is_empty() || &rows == before) {
+                return Ok(false); // the bottom (or it doesn't scroll)
+            }
+            let same = rows.iter().filter(|r| before.contains(r)).count();
+            if same == 0 && !s.backed && s.notches > 1 {
+                // a whole page went by unseen: back, and smaller steps
+                self.wheel(over, s.notches)?;
+                (s.notches, s.backed) = ((s.notches / 2).max(1), true);
+                self.trace(&format!("bag: rows skipped, back up ({} notches a page now)", s.notches));
+                s.at = now() + 0.6;
+                return Ok(true);
+            }
+            if !s.backed && same as f64 >= 0.7 * rows.len().min(before.len()) as f64 {
+                s.notches = (s.notches * 2).min(24); // barely moved: bigger steps
+            }
+        }
+        if !s.backed {
+            s.last = Some(rows);
+        }
+        s.backed = false;
+        s.pages += 1;
+        if s.pages > 30 {
+            return Ok(false);
+        }
+        self.trace(&format!("bag: next page ({} notches)", s.notches));
+        self.wheel(over, -s.notches)?;
+        s.at = now() + 0.6; // look again once it has settled
         Ok(true)
     }
 
@@ -420,18 +592,33 @@ impl Hunt {
     }
 
     /// After an action, waits until the turn is over: "caught", "turn" (the menu
-    /// is back), "over" (the battle ended without a catch) or "timeout"; the
+    /// is back), "fainted" (the wild one, its poison say), "over" (the battle ended
+    /// without a catch) or "timeout"; the
     /// last screenshot, its layout and what the battle said.
     pub(crate) fn wait_turn(&mut self, lay: &Layout) -> R<(&'static str, Option<Frame>, Layout, Vec<String>)> {
         let (start, mut seen, mut gone) = (now(), false, None::<f64>);
         let mut msgs: Vec<String> = Vec::new();
         let mut lay = lay.clone();
         let mut last = None;
+        let mut looked = 0.0;
         while now() - start < TURN_TIMEOUT {
             self.nap(self.traits.poll)?;
             let (f, cur) = self.look(Some(lay.mute));
             let Some(cur) = cur else {
-                // backpack or party screen still up, or the battle is over
+                // yours fainted ("Choose your next Pokemon."), a backpack or party screen still
+                // up: the battle's under it. Otherwise it's over.
+                if now() - start > 1.5 && now() - looked > 0.9 {
+                    looked = now();
+                    let texts = self.screen_texts(&f);
+                    if reader::next_asked(&texts) || reader::party_up(&texts) || reader::bag_title(&texts).is_some() {
+                        if reader::next_asked(&texts) {
+                            msgs.push("(yours fainted: the next one sent out)".into());
+                        }
+                        self.close_screens(6.0)?;
+                        gone = None;
+                        continue;
+                    }
+                }
                 if seen {
                     let g = *gone.get_or_insert(now());
                     if now() - g > 4.0 {
@@ -449,6 +636,9 @@ impl Hunt {
             }
             if reader::caught_said(&msg) {
                 return Ok(("caught", Some(f), cur, msgs));
+            }
+            if reader::wild_fainted(&msg) {
+                return Ok(("fainted", Some(f), cur, msgs));
             }
             if now() - start > 1.5 && menu_ready(&f, &cur) && msg.to_lowercase().contains("should") {
                 return Ok(("turn", Some(f), cur, msgs));
@@ -468,7 +658,12 @@ impl Hunt {
         }
     }
 
+    /// Your Pokemon's HP from its bar's colors; its "350 / 376" read only when the bar can't
+    /// be seen (Windows read "412 / 415" as 31%, 9400% or nothing: a Full Restore every turn).
     pub(crate) fn own_hp(&mut self, f: &Frame, lay: &Layout) -> Option<f64> {
+        if let Some(hp) = vision::hp_bar(f, lay) {
+            return Some(hp);
+        }
         let t = self.region_text(f, lay, layout::PLAYER_BOX);
         reader::hp(&t)
     }
@@ -496,11 +691,16 @@ impl Hunt {
                 progress: &mut (usize, u32, String)) -> R<(String, String)> {
         let cfg = self.c.cfg.clone();
         let (mut f, mut lay) = (f.clone(), lay.clone());
-        let lead = reader::should(&self.region_text(&f, &lay, layout::MSG)).unwrap_or_else(|| cfg.str("lead"));
+        let mut lead = reader::should(&self.region_text(&f, &lay, layout::MSG)).unwrap_or_else(|| cfg.str("lead"));
         let legendary = field_ok(&Value::from("legendary"), &Value::from(enc.species.as_str())); // much harder to catch
         let max_balls = cfg.num(if legendary { "legendary_max_balls" } else { "max_balls" }) as usize;
         let max_turns = cfg.num(if legendary { "legendary_max_turns" } else { "max_turns" }) as u32;
         let (mut balls, mut turns, mut drowsy, mut heals): (Vec<String>, u32, bool, u32) = (Vec::new(), 0, false, 0);
+        // poisoned or burned, as the battle said (its badge isn't always read): balls every
+        // turn, no Yawn or Protect (a Cyber Giratina was poisoned by Clodsire's ability and
+        // fainted while turns went on those)
+        let mut statused = false;
+        let mut missing: Vec<String> = Vec::new(); // balls the bag hasn't got
         let mut cur = enc.clone();
         // A Repeat Ball only helps on species you've caught before (the little Poke Ball
         // icon); anything new gets new_ball instead.
@@ -540,7 +740,7 @@ impl Hunt {
                 heals += 1;
             } else if cur.status == "SLP" {
                 ball = Some(or_new(cfg.str("asleep_ball")));
-            } else if !cur.status.is_empty() {
+            } else if !cur.status.is_empty() || statused {
                 ball = Some(or_new(cfg.str("awake_ball"))); // poisoned etc.: Yawn can't put it to sleep
             } else if !same_word(&cfg.str("sleep_with"), &lead) || !self.pp_for.is_empty() {
                 // only the Yawn user puts it to sleep, with PP left; others just throw
@@ -568,15 +768,38 @@ impl Hunt {
                 if balls.len() >= max_balls {
                     return Ok(("gave up".into(), format!("{} balls", balls.len())));
                 }
-                self.trace(&format!("throwing a {b} (#{})", balls.len() + 1));
-                let mut used = self.use_item(&lay, "Pokeballs", &b, None, true)?;
-                if used.is_none() {
+                // a ball the bag hasn't got (no Dive Balls: a Skeledirge let go) isn't the end
+                // of the catch: the plan's other balls
+                let mut others: Vec<String> = [plain.clone(), Some(cfg.str("awake_ball")), Some(cfg.str("asleep_ball")),
+                                               Some(cfg.str("timer_ball")), Some(cfg.str("first_ball"))]
+                    .into_iter().flatten().filter(|x| !x.is_empty()).collect();
+                others.dedup();
+                let mut used = None;
+                loop {
+                    if missing.contains(&b) {
+                        let Some(next) = others.iter().find(|x| !missing.contains(x)) else { break };
+                        b = next.clone();
+                    }
+                    self.trace(&format!("throwing a {b} (#{})", balls.len() + 1));
+                    used = self.use_item(&lay, "Pokeballs", &b, None, true)?;
+                    if used.is_some() {
+                        break;
+                    }
+                    if self.not_in_bag == b {
+                        self.say(&format!("  (no {b} in the bag: the other balls from now on)"));
+                        missing.push(b.clone());
+                        if b == timer {
+                            timer.clear();
+                        }
+                        continue;
+                    }
                     if let Some(p) = plain.take() {
                         self.trace(&format!("no {b} to throw: {p}s from now on"));
                         timer.clear();
                         b = p;
-                        used = self.use_item(&lay, "Pokeballs", &b, None, true)?;
+                        continue;
                     }
+                    break;
                 }
                 let Some(used) = used else { return Ok(("no bag".into(), format!("{b} failed"))) };
                 balls.push(used.clone());
@@ -593,11 +816,27 @@ impl Hunt {
                     self.c.out.debug.shot(&format!("catch turn {turns}: {outcome}"), &game_shot(img, &lay), false);
                 }
             }
+            if outcome == "timeout" {
+                // what was on screen, to tell why from the log
+                let shot = img.clone().unwrap_or_else(|| self.grab());
+                self.trouble(&format!("turn {turns} never ended"), &shot);
+            }
             let details = format!("{} ball(s), last {}, {turns} turns", balls.len(), balls.last().map(|s| s.as_str()).unwrap_or("-"));
             let Some(img) = img.filter(|_| outcome == "turn") else { return Ok((outcome.into(), details)) };
             f = img;
             if msgs.iter().any(|m| m.to_lowercase().contains("fell asleep")) {
                 drowsy = false;
+            }
+            // yours fainted and the next went out: "What should Rotom do?" (only the Yawn user
+            // sleeps it; another just throws)
+            let ours_fainted = msgs.iter().any(|m| m.to_lowercase().contains("fainted") && !reader::wild_fainted(m));
+            if let Some(now_out) = msgs.last().and_then(|m| reader::should(m)).filter(|l| ours_fainted && !same_word(l, &lead)) {
+                self.trace(&format!("{now_out} is out now"));
+                lead = now_out;
+            }
+            if !statused && msgs.iter().any(|m| reader::wild_statused(m)) {
+                statused = true;
+                self.trace("it has a status (the battle said so): balls from now on");
             }
             if turns >= max_turns {
                 return Ok(("gave up".into(), details));

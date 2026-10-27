@@ -288,6 +288,11 @@ impl Hunt {
     pub(crate) fn clear_leftovers(&mut self) -> R<bool> {
         let f = self.grab();
         let texts = self.screen_texts(&f);
+        // a backpack or party screen left over a battle (it hides the battle: no encounter in
+        // sight for minutes), or yours fainted and "Choose your next Pokemon." waits
+        if reader::next_asked(&texts) || reader::party_up(&texts) || reader::bag_title(&texts).is_some() {
+            return self.close_screens(6.0);
+        }
         if menu_open(&texts) {
             if let Some(tab) = find_menu_tab(&f, &texts) {
                 self.click(tab)?;

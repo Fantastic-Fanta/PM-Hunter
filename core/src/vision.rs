@@ -262,3 +262,80 @@ pub fn sprite(f: &Frame, lay: &Layout) -> Frame {
         image::Rgb(at(f, x as usize, y as usize))
     })
 }
+
+/// Your Pokemon's HP, 0..1, from how much of its HP bar is colored (green, yellow or red:
+/// the empty part is dark or gray). None when the box isn't in sight (the bar's surround
+/// isn't the box's gray). No text read: Windows read "412 / 415" as 31%, 9400% or nothing.
+pub fn hp_bar(f: &Frame, lay: &Layout) -> Option<f64> {
+    let bar = lay.boxed(layout::HP_BAR);
+    let (x0, y0, x1, y1) = clip(f, bar);
+    if x1 - x0 < 20 || y1 <= y0 {
+        return None;
+    }
+    let gray = |c: Rgb| hi(c) - lo(c) < 14 && (105..=180).contains(&hi(c));
+    let pad = (4.0 * lay.v()).max(2.0) as i32;
+    let above = IBox::new(bar.l, bar.t - 18 * pad / 4 - pad, bar.r, bar.t - 18 * pad / 4);
+    let below = IBox::new(bar.l, bar.b + 9 * pad / 4, bar.r, bar.b + 9 * pad / 4 + pad);
+    if share(f, above, gray) < 0.6 && share(f, below, gray) < 0.6 {
+        return None;
+    }
+    let colored = |c: Rgb| hi(c) > 70 && hi(c) - lo(c) > 40;
+    let dark = |c: Rgb| hi(c) < 90; // the bar's empty part
+    // three rows through the bar; each its colored share. A bar's every pixel is colored or
+    // dark: anything else (the box's gray) and the layout is off the bar, not a 0% read.
+    let mut rows = Vec::new();
+    for k in [0.3, 0.5, 0.7] {
+        let y = (y0 as f64 + k * (y1 - y0) as f64) as i32;
+        let row = IBox::new(x0 as i32, y, x1 as i32, y + 1);
+        if share(f, row, |c| !colored(c) && !dark(c)) > 0.12 {
+            return None;
+        }
+        rows.push(share(f, row, colored));
+    }
+    let mut sorted = rows.clone();
+    sorted.sort_by(|a, b| a.total_cmp(b));
+    Some(sorted[1])
+}
+
+/// The Pokemon Party screen's cards, in party order (the left column, top down,
+/// then the right): each card's box and whether it fainted (a dark red card).
+/// In battle the first is the Pokemon out now.
+pub fn party_cards(f: &Frame) -> Vec<(IBox, bool)> {
+    let (w, h) = (f.width() as i32, f.height() as i32);
+    let alive = |c: Rgb| near(c, [180, 223, 255], 28);
+    let fainted = |c: Rgb| near(c, [87, 0, 0], 28);
+    let mut cards: Vec<(IBox, bool)> = Vec::new();
+    for (test, out) in [(&alive as &dyn Fn(Rgb) -> bool, false), (&fainted as &dyn Fn(Rgb) -> bool, true)] {
+        for b in mask(f, px::whole(f), test).blobs() {
+            let (bw, bh) = (b.b.w(), b.b.h());
+            let r = bw as f64 / bh.max(1) as f64;
+            if bw > w / 8 && bh > h / 14 && (2.0..5.0).contains(&r) && b.size as f64 > 0.3 * (bw * bh) as f64 {
+                cards.push((b.b, out));
+            }
+        }
+    }
+    // columns: cards whose left edges are close together
+    cards.sort_by(|a, b| a.0.l.cmp(&b.0.l));
+    let mut columns: Vec<Vec<(IBox, bool)>> = Vec::new();
+    for c in cards {
+        match columns.last_mut() {
+            Some(col) if (c.0.l - col[0].0.l).abs() < w / 10 => col.push(c),
+            _ => columns.push(vec![c]),
+        }
+    }
+    columns.into_iter().flat_map(|mut col| {
+        col.sort_by(|a, b| a.0.t.cmp(&b.0.t));
+        col
+    }).collect()
+}
+
+/// The backpack's Close button: the red pill right of the "Backpack" title, on its row
+/// (found by its color: the word is read as "C", "e", "lose" on some PCs).
+pub fn bag_close(f: &Frame, title: Pt) -> Option<Pt> {
+    let (w, h) = (f.width() as i32, f.height() as i32);
+    let band = IBox::new(title.x as i32, (title.y as i32 - h / 12).max(0), w, (title.y as i32 + h / 12).min(h));
+    mask(f, band, |c| c[0] > 215 && (35..=120).contains(&c[1]) && (25..=115).contains(&c[2])).blobs().into_iter()
+        .filter(|b| b.b.w() > w / 40 && b.b.h() > h / 80 && b.b.w() > b.b.h())
+        .max_by_key(|b| b.size)
+        .map(|b| b.b.center())
+}

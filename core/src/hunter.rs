@@ -357,6 +357,15 @@ pub struct Hunt {
     pub(crate) chat_closed_at: f64,
     last_frame: Option<(Frame, f64)>,
     pub(crate) used_item: String,
+    /// The item the bag was looked all through for, last, and didn't have.
+    pub(crate) not_in_bag: String,
+    /// Since when Roblox's window has been gone (closed, crashed), and when the hunter last
+    /// said it brought Roblox to the front.
+    roblox_gone: Option<f64>,
+    front_said: f64,
+    /// A calibration far from the saved one, kept till a second agrees (one off read of
+    /// the Mute button fitted 1.44x and the menu went unseen for a minute).
+    pending_cal: Option<Calibration>,
     pub(crate) move_pp: Option<i64>,
     pub(crate) calibrate_next: bool,
     pub(crate) notify: Vec<Rule>,
@@ -433,6 +442,10 @@ pub fn start(dev: Arc<dyn Device>, sink: Arc<dyn Sink>, debug: Arc<DebugChannel>
         chat_closed_at: 0.0,
         last_frame: None,
         used_item: String::new(),
+        not_in_bag: String::new(),
+        roblox_gone: None,
+        front_said: 0.0,
+        pending_cal: None,
         move_pp: None,
         calibrate_next: c.opts.calibrate,
         notify,
@@ -535,10 +548,26 @@ impl Hunt {
     }
 
     fn keep_roblox_in_front(&mut self) {
-        if !self.dev.roblox_in_front() {
-            self.say("  (bringing Roblox back to the front)");
-            self.dev.focus_roblox();
+        if self.dev.roblox_in_front() {
+            return;
         }
+        if !self.dev.roblox_open() {
+            // closed or crashed: said once (not "bringing Roblox back" every second), you pinged
+            if self.roblox_gone.is_none() {
+                self.roblox_gone = Some(now());
+                self.say("  (Roblox isn't open: closed or crashed? Hunting goes on once it's back)");
+                self.c.discord.post("pokehunt: Roblox isn't open (closed or crashed?): hunting goes on once it's back.", None);
+            }
+            return;
+        }
+        if let Some(since) = self.roblox_gone.take() {
+            self.say(&format!("  (Roblox is back, after {:.0} min)", (now() - since) / 60.0));
+        }
+        if now() - self.front_said > 30.0 {
+            self.front_said = now();
+            self.say("  (bringing Roblox back to the front)");
+        }
+        self.dev.focus_roblox();
     }
 
     pub(crate) fn click(&mut self, p: Pt) -> R<()> {
@@ -550,6 +579,9 @@ impl Hunt {
             return Err(Halt::FailSafe);
         }
         self.keep_roblox_in_front();
+        if self.roblox_gone.is_some() {
+            return Ok(()); // (nothing to click: it'd land on whatever's on the desktop)
+        }
         self.last_click = now();
         let word = if self.traits.phone { "tap" } else { "click" };
         self.c.out.debug.note(&format!("    {}{word} ({:.0}, {:.0})", if right { "right " } else { "" }, p.x, p.y));
@@ -571,6 +603,22 @@ impl Hunt {
         self.last_click = now();
         self.c.out.debug.note(&format!("    swipe ({:.0}, {:.0}) to ({:.0}, {:.0})", from.x, from.y, to.x, to.y));
         self.dev.swipe(from, to, seconds);
+        Ok(())
+    }
+
+    /// The mouse wheel over p: notches, up when positive (a PC's bag list).
+    pub(crate) fn wheel(&mut self, p: Pt, notches: i32) -> R<()> {
+        self.check()?;
+        if self.dev.fail_safe() {
+            return Err(Halt::FailSafe);
+        }
+        self.keep_roblox_in_front();
+        if self.roblox_gone.is_some() {
+            return Ok(());
+        }
+        self.last_click = now();
+        self.c.out.debug.note(&format!("    wheel {notches:+} at ({:.0}, {:.0})", p.x, p.y));
+        self.dev.wheel(p, notches);
         Ok(())
     }
 
@@ -623,6 +671,7 @@ impl Hunt {
         if key == self.cal_key {
             return;
         }
+        self.pending_cal = None; // (a fit of another screen size never agrees with this one's)
         let saved = self.c.store.calibration(&self.cal_file, &key);
         self.cal_saved = saved.is_some();
         self.cal = saved.unwrap_or_default();
@@ -668,6 +717,20 @@ impl Hunt {
     /// Fits and saves the layout for this screen. True if it worked.
     pub(crate) fn auto_calibrate(&mut self, f: &Frame, mute: IBox, draw: bool) -> bool {
         let Some(new) = calibrate(f, mute) else { return false };
+        // far from the saved fit (a Windows PC fitted 1.44x off one read, then 0.99x again):
+        // only once a second fit agrees
+        let far = |a: &Calibration, b: &Calibration| (0..2).any(|i| (a.fit[i] - b.fit[i]).abs() > 0.08 * b.fit[i].abs().max(0.1));
+        if self.cal_saved && !draw && far(&new, &self.cal) {
+            let agrees = self.pending_cal.as_ref().is_some_and(|p| !far(&new, p) && (0..2).all(|i| (new.fit[i] - p.fit[i]).abs() < 0.02));
+            if !agrees {
+                self.trace(&format!("a fit of {:.3} across, {:.3} down (the saved one's {:.3}, {:.3}): kept till another agrees, \
+                                     the Mute button at ({}, {}) {}x{}", new.fit[0], new.fit[1], self.cal.fit[0], self.cal.fit[1],
+                                    mute.l, mute.t, mute.w(), mute.h()));
+                self.pending_cal = Some(new);
+                return false;
+            }
+        }
+        self.pending_cal = None;
         let changed = !self.cal_saved || (0..4).any(|i| (new.fit[i] - self.cal.fit[i]).abs() > 0.003);
         self.c.store.save_calibration(&self.cal_file, &self.cal_key, &new);
         self.cal = new.clone();
@@ -935,6 +998,16 @@ impl Hunt {
                                           .collect::<Vec<_>>().join(", "),
                                       if tried.is_empty() { "nothing yet".into() } else { tried.join(" / ") }));
                 }
+                if !menu {
+                    // where it looked for the menu, and what it found there: to tell why from the log
+                    let seen: Vec<String> = layout::BUTTONS.iter().map(|(name, area, _)| {
+                        let m = px::median(&f, lay.boxed(*area), |_| true).unwrap_or([0.0; 3]);
+                        format!("{name} {:.0},{:.0},{:.0}", m[0], m[1], m[2])
+                    }).collect();
+                    self.say(&format!("  (the Mute button at ({}, {}) {}x{}, fit {:.3} x {:.3}; the menu's colors: {})",
+                                      lay.mute.l, lay.mute.t, lay.mute.w(), lay.mute.h(), lay.cal.fit[0], lay.cal.fit[1],
+                                      seen.join("; ")));
+                }
                 self.trouble(&format!("{why} for 15 s, waiting"), &f);
                 saved = true;
             }
@@ -986,6 +1059,48 @@ impl Hunt {
         }
         if let Some(f) = last {
             self.trouble("still in the encounter 20 s after clicking Run", &f);
+        }
+        Ok(false)
+    }
+
+    /// The wild one fainted: its battle's last words (experience, a level, a move to
+    /// learn: "No") let go by till the battle's gone. False, with a screenshot, if it's
+    /// still there after 30 s (it sat a minute on Giratina's, nothing said what for).
+    pub(crate) fn finish_battle(&mut self, lay: &Layout) -> R<bool> {
+        let (end, mut gone, mut clicked) = (now() + 30.0, None::<f64>, 0.0);
+        let mut last = None;
+        while now() < end {
+            let f = self.grab();
+            if self.find_mute(&f, Some(lay.mute)).is_none() {
+                let g = *gone.get_or_insert(now());
+                if now() - g > GONE_AFTER {
+                    return Ok(true);
+                }
+                self.nap(0.2)?;
+                continue;
+            }
+            gone = None;
+            if now() - clicked > 1.5 {
+                let texts = self.screen_texts(&f);
+                let no = texts.iter().find(|t| {
+                    let l = norm(&t.text);
+                    ["no", "cancel", "skip", "dontlearn", "keepoldmoves"].contains(&l.as_str())
+                });
+                let at = match no {
+                    Some(t) => {
+                        self.trace(&format!("after the battle: \"{}\"", t.text));
+                        t.pt()
+                    }
+                    None => lay.xy(500.0, 952.0), // the message box's left: on with its words (a Yes sits right)
+                };
+                self.click(at)?;
+                clicked = now();
+            }
+            last = Some(f);
+            self.nap(0.3)?;
+        }
+        if let Some(f) = last {
+            self.trouble("the battle didn't end after the wild one fainted", &f);
         }
         Ok(false)
     }
@@ -1252,7 +1367,7 @@ impl Hunt {
                 if !watch {
                     self.keep_roblox_in_front(); // a popup may be hiding the encounter
                 }
-                if !watch && now() - last_enc > 20.0 && now() - last_check > 20.0 {
+                if !watch && now() - last_enc > 10.0 && now() - last_check > 10.0 {
                     last_check = now();
                     if self.clear_leftovers()? {
                         self.say("  (closed a leftover menu or chat panel)");
@@ -1379,6 +1494,17 @@ impl Hunt {
                 if result == "taken over" {
                     continue;
                 }
+                if result == "fainted" {
+                    // nothing to hold: it's gone (poisoned by the lead's ability, say)
+                    self.print(&format!("  catch: fainted ({details})"));
+                    self.log_encounter(&enc, "fainted");
+                    if !practice {
+                        c.discord.post(&format!("Lost: {} fainted before it was caught ({details}).", enc.title()),
+                                       Some(png(&game_shot(&f, &lay))));
+                    }
+                    self.acting(|h| h.finish_battle(&lay))?;
+                    continue;
+                }
                 self.print(&format!("  catch: {result} ({details})"));
                 self.log_encounter(&enc, &result);
                 if result == "caught" {
@@ -1397,8 +1523,14 @@ impl Hunt {
                     continue;
                 }
                 if !practice {
-                    c.discord.post(&format!("Couldn't catch ({result}, {details}), ran from: {}", enc.title()),
-                                   Some(png(&game_shot(&f, &lay))));
+                    let said = if result == "over" {
+                        // gone mid-catch with no word of a catch read: it may well be caught
+                        format!("The battle ended mid-catch ({details}) with no catch message read: {} may have been \
+                                 caught, check your box.", enc.title())
+                    } else {
+                        format!("Couldn't catch ({result}, {details}), ran from: {}", enc.title())
+                    };
+                    c.discord.post(&said, Some(png(&game_shot(&f, &lay))));
                 }
                 let now_f = self.grab();
                 if self.find_mute(&now_f, Some(lay.mute)).is_some() {
