@@ -361,6 +361,8 @@ pub struct Hunt {
     pub(crate) used_item: String,
     /// The item the bag was looked all through for, last, and didn't have.
     pub(crate) not_in_bag: String,
+    /// A ball the next use_item takes instead of its item if it's a favorite in sight (Level Ball).
+    pub(crate) prefer: String,
     /// Since when Roblox's window has been gone (closed, crashed), and when the hunter last
     /// said it brought Roblox to the front.
     roblox_gone: Option<f64>,
@@ -446,6 +448,7 @@ pub fn start(dev: Arc<dyn Device>, sink: Arc<dyn Sink>, debug: Arc<DebugChannel>
         last_frame: None,
         used_item: String::new(),
         not_in_bag: String::new(),
+        prefer: String::new(),
         roblox_gone: None,
         front_said: 0.0,
         pending_cal: None,

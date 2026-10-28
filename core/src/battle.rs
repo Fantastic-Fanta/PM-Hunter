@@ -8,7 +8,7 @@ use crate::px::{Frame, Pt};
 use crate::reader::{self, bag_still, find_tab, is_count, search_box, TextHit};
 use crate::rules::{field_ok, norm, same_mon, same_word, Enc};
 use crate::util::{lower_first, now};
-use crate::vision::{self, box_visible, chat_showing, find_use_button, menu_ready};
+use crate::vision::{self, box_visible, chat_showing, favorited, find_use_button, menu_ready};
 use serde_json::Value;
 
 /// Scrolling the backpack's list (phones, when its search box can't be typed
@@ -150,6 +150,7 @@ impl Hunt {
     pub(crate) fn use_item(&mut self, lay: &Layout, tab: &str, item: &str, target: Option<&str>, in_battle: bool) -> R<Option<String>> {
         // the bag's search box would bring up the keyboard, which on a phone covers the list
         self.dev.keyboard_hidden(true);
+        let prefer = std::mem::take(&mut self.prefer);
         let mut r = Ok(None);
         for attempt in 1..=(if in_battle { 3 } else { 1 }) {
             if attempt > 1 {
@@ -157,7 +158,7 @@ impl Hunt {
                 self.nap(0.6)?; // (it's closing)
             }
             self.not_in_bag.clear();
-            r = self.use_item_in(lay, tab, item, target, in_battle);
+            r = self.use_item_in(lay, tab, item, target, &prefer, in_battle);
             if !matches!(r, Ok(None)) || self.not_in_bag == item {
                 break; // (one the bag hasn't got isn't looked for again)
             }
@@ -170,9 +171,12 @@ impl Hunt {
         Ok(r)
     }
 
-    fn use_item_in(&mut self, lay: &Layout, tab: &str, item: &str, target: Option<&str>, in_battle: bool) -> R<Option<String>> {
+    fn use_item_in(&mut self, lay: &Layout, tab: &str, item: &str, target: Option<&str>, prefer: &str,
+                   in_battle: bool) -> R<Option<String>> {
         let phone = self.traits.phone;
-        let item = item.to_string();
+        let mut item = item.to_string();
+        // prefer: looked for on the list first, taken if it's a favorite in sight; decided once
+        let mut looking = if !prefer.is_empty() && norm(prefer) != norm(&item) { "look" } else { "done" };
         if in_battle {
             self.ensure_battle(lay)?;
             self.trace(&format!("bag: opening it for {item}"));
@@ -236,7 +240,8 @@ impl Hunt {
             }
             if step == "tab" {
                 // the bag opens on the tab it was left on: the item in sight there, no click
-                if texts.iter().any(|t| norm(&t.text) == norm(&item) && t.x < split) {
+                let names = [norm(&item), norm(prefer)];
+                if texts.iter().any(|t| names.contains(&norm(&t.text)) && t.x < split) {
                     self.trace(&format!("bag: {item} is in sight already"));
                     (step, tab_at) = ("item", now()); // (and on with this read)
                 } else {
@@ -255,6 +260,25 @@ impl Hunt {
                 }
             }
             if step == "item" {
+                if looking != "done" {
+                    // favorites are at the top: prefer if it's one of those in sight, else item (never
+                    // searched for: a search empties the list of the favorites that are there)
+                    let mut rows: Vec<f64> = texts.iter().filter(|t| norm(&t.text) == norm(prefer) && t.x < split)
+                        .map(|t| t.y).collect();
+                    rows.sort_by(f64::total_cmp);
+                    let listed = texts.iter().any(|t| is_count(&t.text));
+                    if let Some(&y) = rows.first() {
+                        if favorited(&f, &texts, y, lay) {
+                            self.print(&format!("  {prefer} is a favorite: throwing that instead of the {item}"));
+                            item = prefer.to_string();
+                        }
+                        looking = "done";
+                    } else if listed || now() - tab_at > 3.0 {
+                        looking = "done"; // not in sight (or no list read): item
+                    } else {
+                        continue; // the list isn't up yet
+                    }
+                }
                 // exact names: "Dive Ball" and "Dream Ball" are one misread apart
                 let row = texts.iter().filter(|t| norm(&t.text) == norm(&item) && t.x < split)
                     .min_by(|a, b| a.y.total_cmp(&b.y).then(a.x.total_cmp(&b.x))).cloned();
@@ -790,6 +814,7 @@ impl Hunt {
                         b = next.clone();
                     }
                     self.trace(&format!("throwing a {b} (#{})", balls.len() + 1));
+                    self.prefer = cfg.str("level_ball");
                     used = self.use_item(&lay, "Pokeballs", &b, None, true)?;
                     if used.is_some() {
                         break;
