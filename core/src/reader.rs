@@ -50,6 +50,7 @@ re!(DIGIT, r"\d");
 // ("40 40"); nothing else there has numbers.
 re!(PP, r"(\d+)\s*(?:[/|Il\\]|\s)\s*(\d+)");
 re!(SHOULD, r"should (.+?) do");
+re!(SAVE_WAIT, r"(?i)wait\s+(\d+)\s+more\s+second");
 re!(SENT_TO, r"sent to (the )?(pc|box)");
 re!(TARGET_CUT, r"(?i)\s+-\s+|\s+lv");
 re!(WILD_FAINTED, r"(?i)\bwild\b.*\bfainted");
@@ -387,6 +388,19 @@ pub fn menu_button(hit: Pt, texts: &[TextHit], retry: bool) -> Pt {
     if steps.is_empty() { hit } else { Pt::new(hit.x, hit.y - steps[steps.len() / 2] / 2.0) }
 }
 
+/// The box after Save: "Save successful", "Try again", or "Unable to save.
+/// Please wait 95 more seconds." (one save every 2 minutes).
+pub fn save_message(t: &str) -> bool {
+    let t = t.to_lowercase();
+    (t.contains("save") && (t.contains("successful") || t.contains("again") || t.contains("unable")))
+        || SAVE_WAIT.is_match(&t)
+}
+
+/// The seconds a "Please wait 95 more seconds" says.
+pub fn save_wait(t: &str) -> Option<u64> {
+    SAVE_WAIT.captures(t).and_then(|m| m[1].parse().ok())
+}
+
 /// The battle's text after a catch: "Gotcha! ... was caught!", or only
 /// "Rattata was added to the Party." when the first message went by too fast.
 pub fn caught_said(msg: &str) -> bool {
@@ -529,6 +543,8 @@ mod tests {
         assert!(menu_open(&texts));
         // Party (not read) between Pokedex and Bag: rows 100 px apart
         assert_eq!(menu_button(Pt::new(100.0, 500.0), &texts, false), Pt::new(100.0, 450.0));
+        assert!(save_message("Unable to save. Please wait 95 more seconds."));
+        assert_eq!(save_wait("Please wait 95 more seconds."), Some(95));
         assert!(caught_said("Rattata was sent to the PC!"));
     }
 }
