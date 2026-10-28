@@ -1266,11 +1266,18 @@ impl Hunt {
         let key = self.traits.toggle_key;
         // A new install (no debug run gone right, no encounter ever): the first hunt's first
         // encounter is a debug run, as on play's right click, to see everything works here
-        if c.opts.window && !c.store.path("debug-run.json").exists() && !c.store.path("encounters.csv").exists() {
+        // Also a hunt that hasn't learned the bag and fight menu yet (an install from before the
+        // positions were cached): its debug run is what finds them (menu.json).
+        let learned = Store::read_json(&c.store.path("menu.json")).values()
+            .any(|v| v.as_object().is_some_and(|o| o.keys().any(|k| k.starts_with("fav:"))));
+        let fresh = !c.store.path("debug-run.json").exists() && !c.store.path("encounters.csv").exists();
+        if c.opts.window && (fresh || !learned) {
             c.debug_run.store(true, Relaxed);
             c.fit_next.store(true, Relaxed);
             c.update_loud();
-            self.print("  (first time here: the first encounter is a debug run, to check everything works)");
+            self.print(&format!("  ({}: the first encounter is a debug run, to {})",
+                                if fresh { "first time here" } else { "the bag's and the moves' spots aren't known yet" },
+                                if fresh { "check everything works" } else { "learn them" }));
         }
         if !c.running() {
             self.print(&format!("pokehunt paused: {key} to start."));
