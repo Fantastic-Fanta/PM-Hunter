@@ -18,7 +18,7 @@ use std::sync::LazyLock;
 static AFTER_ITEM: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)restored|recovered|effect|healed|was used|can't be used").unwrap());
 
-fn size_key(f: &Frame) -> String {
+pub(crate) fn size_key(f: &Frame) -> String {
     format!("{}x{}", f.width(), f.height())
 }
 
@@ -37,6 +37,31 @@ impl Hunt {
         let path = self.c.store.path("menu.json");
         let spots = self.menu_spots.get_or_insert_with(|| Store::read_json(&path));
         spots.get(&size_key(f)).and_then(|s| s.get(name)).cloned()
+    }
+
+    /// A cached point (the bag's tabs, a favorite's row, Use, a party card, a move) for this
+    /// screen size: clicked without reading anything, as the debug run found it.
+    pub(crate) fn spot(&mut self, f: &Frame, name: &str) -> Option<Pt> {
+        self.menu_spot(f, name).as_ref().and_then(as_pt)
+    }
+
+    /// A cached yes/no (a ball is a favorite) for this screen size.
+    pub(crate) fn spot_flag(&mut self, f: &Frame, name: &str) -> Option<bool> {
+        self.menu_spot(f, name).and_then(|v| v.as_bool())
+    }
+
+    /// Saves a spot or flag: over the old one in the debug run, otherwise only where there's none.
+    pub(crate) fn put_spot(&mut self, f: &Frame, name: &str, v: Value) {
+        let had = self.menu_spot(f, name).is_some();
+        if had && !self.learning {
+            return;
+        }
+        let spots = self.menu_spots.as_mut().unwrap();
+        let mine = spots.entry(size_key(f)).or_insert_with(|| Value::Object(Map::new()));
+        let Some(mine) = mine.as_object_mut() else { return };
+        mine.insert(name.into(), v);
+        let text = Value::Object(spots.clone()).to_string();
+        let _ = write_atomic(&self.c.store.path("menu.json"), text.as_bytes());
     }
 
     /// MENU's tab (if it was read) and every item in the open MENU, for quick_menu.
@@ -302,6 +327,7 @@ impl Hunt {
         let split = lay.xy(layout::BAG_SPLIT, 0.0).x;
         let (mut seen, mut tabbed, end, mut texts): (Vec<(String, bool)>, bool, f64, Vec<TextHit>) =
             (Vec::new(), false, now() + 8.0, Vec::new());
+        let mut last: Option<(Frame, Vec<TextHit>)> = None;
         while now() < end {
             self.nap(self.traits.poll)?;
             let f = self.grab();
@@ -313,6 +339,7 @@ impl Hunt {
             if !tabbed {
                 if let Some(hit) = find_tab(&texts, tab, split, f.width()) {
                     self.click(hit.pt())?;
+                    self.put_spot(&f, &format!("bagtab:{tab}"), json!([hit.x, hit.y]));
                     tabbed = true;
                 }
                 continue;
@@ -321,8 +348,20 @@ impl Hunt {
                 continue; // the list isn't up yet
             }
             seen = favorite_rows(&f, &texts, items, split, lay);
+            last = Some((f.clone(), texts.clone()));
             if seen.iter().all(|s| s.1) || now() > end - 5.0 {
                 break;
+            }
+        }
+        // what the debug run learns: which are favorites, and where their rows are
+        if let Some((f, texts)) = last {
+            for (item, fav) in &seen {
+                self.put_spot(&f, &format!("fav:{item}"), json!(fav));
+                let top = texts.iter().filter(|t| norm(&t.text) == norm(item) && t.x < split)
+                    .min_by(|a, b| a.y.total_cmp(&b.y));
+                if let (true, Some(t)) = (*fav, top) {
+                    self.put_spot(&f, &format!("row:{tab}:{item}"), json!([t.x, t.y]));
+                }
             }
         }
         Ok(items.iter().map(|i| (i.clone(), seen.iter().any(|s| &s.0 == i && s.1))).collect())
@@ -424,6 +463,13 @@ impl Hunt {
     /// its message clicked away. Each step to the debug channel, a picture with
     /// any that went wrong, a summary at the end. True if every step went right.
     pub(crate) fn debug_workflow(&mut self, enc: &Enc, f: &Frame, lay: &Layout) -> R<bool> {
+        self.learning = true; // every bag and move position seen is kept
+        let r = self.debug_workflow_inner(enc, f, lay);
+        self.learning = false;
+        r
+    }
+
+    fn debug_workflow_inner(&mut self, enc: &Enc, f: &Frame, lay: &Layout) -> R<bool> {
         let cfg = self.c.cfg.clone();
         let mut steps: Vec<(String, bool, String)> = Vec::new();
         let step = |h: &mut Hunt, steps: &mut Vec<(String, bool, String)>, name: &str, ok: bool, detail: &str, picture: Option<&Frame>| {
@@ -494,6 +540,13 @@ impl Hunt {
         let opened = self.open_bag("debug")?;
         step(self, &mut steps, "MENU > Bag", opened, "", None);
         if opened {
+            // the balls' favorites, learned here: which of them go first (a Level Ball), and where
+            let mut balls: Vec<String> = ["level_ball", "first_ball", "awake_ball", "asleep_ball", "timer_ball", "new_ball"]
+                .iter().map(|k| cfg.str(k)).filter(|b| !b.is_empty()).collect();
+            balls.dedup();
+            let favs = self.favorites_in_bag(&lay, "Pokeballs", &balls)?;
+            let names: Vec<String> = favs.iter().filter(|b| b.1).map(|b| b.0.clone()).collect();
+            self.print(&format!("  debug: favorite balls: {}", if names.is_empty() { "none".into() } else { names.join(", ") }));
             for (name, fav) in self.favorites_in_bag(&lay, "Recovers", &[heal.clone(), pp.clone()])? {
                 step(self, &mut steps, &format!("{name} is a favorite"), fav,
                      if fav { "" } else { "favorite it in the bag (right click)" }, None);

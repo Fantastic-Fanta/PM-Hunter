@@ -9,7 +9,7 @@ use crate::reader::{self, bag_still, find_tab, is_count, search_box, TextHit};
 use crate::rules::{field_ok, norm, same_mon, same_word, Enc};
 use crate::util::{lower_first, now};
 use crate::vision::{self, box_visible, chat_showing, favorited, find_use_button, menu_ready};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 /// Scrolling the backpack's list (phones, when its search box can't be typed
 /// into; a PC always, with the mouse wheel): first to the top, then down a page at
@@ -151,6 +151,14 @@ impl Hunt {
         // the bag's search box would bring up the keyboard, which on a phone covers the list
         self.dev.keyboard_hidden(true);
         let prefer = std::mem::take(&mut self.prefer);
+        // everything the debug run found cached: clicked at once, nothing read (no misreads)
+        if !self.learning {
+            if let Some(used) = self.cached_item(lay, tab, item, target, &prefer, in_battle)? {
+                self.dev.keyboard_hidden(false);
+                self.used_item = used.clone();
+                return Ok(Some(used));
+            }
+        }
         let mut r = Ok(None);
         for attempt in 1..=(if in_battle { 3 } else { 1 }) {
             if attempt > 1 {
@@ -169,6 +177,57 @@ impl Hunt {
             self.used_item = used.clone();
         }
         Ok(r)
+    }
+
+    /// The bag from the cache alone (menu.json, from the debug run): its tab, the favorite's
+    /// row, Use, and the party card for a heal, each clicked where it was found, with nothing read.
+    /// None if any is unknown (or a preferred ball's favorite isn't): then it's read as before.
+    fn cached_item(&mut self, lay: &Layout, tab: &str, item: &str, target: Option<&str>, prefer: &str,
+                   in_battle: bool) -> R<Option<String>> {
+        let f = self.grab();
+        let mut item = item.to_string();
+        if !prefer.is_empty() && norm(prefer) != norm(&item) {
+            match self.spot_flag(&f, &format!("fav:{prefer}")) {
+                Some(true) => item = prefer.to_string(),
+                Some(false) => {}
+                None => return Ok(None), // not learned yet
+            }
+        }
+        let (Some(tab_at), Some(row)) = (self.spot(&f, &format!("bagtab:{tab}")), self.spot(&f, &format!("row:{tab}:{item}")))
+        else { return Ok(None) };
+        let Some(use_at) = self.spot(&f, &format!("use:{tab}:{item}")).or_else(|| self.spot(&f, &format!("use:{tab}")))
+        else { return Ok(None) };
+        let card = match target {
+            Some(t) => match self.spot(&f, &format!("party:{in_battle}:{t}")) {
+                Some(c) => Some(c),
+                None => return Ok(None),
+            },
+            None => None,
+        };
+        if in_battle {
+            self.ensure_battle(lay)?;
+            self.trace(&format!("bag: opening it for {item} (the spots from the debug run)"));
+            self.click(lay.pt(layout::BAG))?;
+            self.nap(1.0)?; // it floats up as it opens
+        }
+        self.click(tab_at)?;
+        self.nap(0.6)?;
+        self.click(row)?;
+        self.nap(0.6)?;
+        self.click(use_at)?;
+        self.move_mouse(lay.pt(layout::AFK_SPOT))?;
+        if let Some(c) = card {
+            self.nap(1.3)?; // the party screen
+            self.click(c)?;
+            self.nap(0.8)?;
+        }
+        Ok(Some(item))
+    }
+
+    fn keep_spots(&mut self, f: &Frame, learned: &[(String, Value)]) {
+        for (k, v) in learned {
+            self.put_spot(f, k, v.clone());
+        }
     }
 
     fn use_item_in(&mut self, lay: &Layout, tab: &str, item: &str, target: Option<&str>, prefer: &str,
@@ -197,6 +256,7 @@ impl Hunt {
         let mut last_row_y: Option<f64> = None; // (phones) where the row was on the screenshot before
         let mut last_title: Option<TextHit> = None;
         let mut scroll = Scroll::default();
+        let mut learned: Vec<(String, Value)> = Vec::new(); // the spots this goes through, kept once it worked
         while now() < end {
             if in_battle || img.is_some() {
                 self.nap(self.traits.poll)?;
@@ -250,6 +310,7 @@ impl Hunt {
                         self.trace(&format!("bag: {tab} tab at ({:.0}, {:.0}){}", hit.x, hit.y,
                                             if worked_out { ", worked out from the tabs around it" } else { "" }));
                         self.click(hit.pt())?;
+                        learned.push((format!("bagtab:{tab}"), json!([hit.x, hit.y])));
                         (step, tab_at) = ("item", now());
                         tab_hit = Some(hit);
                     } else if now() - *no_tab_since.get_or_insert(now()) > 5.0 {
@@ -300,6 +361,11 @@ impl Hunt {
                     let left = count.map(|c| c.text).unwrap_or_else(|| "?".into());
                     self.trace(&format!("bag: clicking {item} ({left} in the bag) at ({:.0}, {:.0})", spot.x, spot.y));
                     self.click(spot)?;
+                    // a favorite's row (at the top of the list) is the same every time; one
+                    // scrolled to isn't
+                    if picks == 0 && favorited(&f, &texts, r.y, lay) {
+                        learned.push((format!("row:{tab}:{item}"), json!([spot.x, spot.y])));
+                    }
                     self.move_mouse(lay.pt(layout::AFK_SPOT))?;
                     (step, picked_at) = ("use", now());
                 } else if phone && tab == "Pokeballs" && scroll.pages + scroll.at_top as u32 == 0 && now() - tab_at > 1.5
@@ -372,8 +438,11 @@ impl Hunt {
                 if let Some(u) = use_at.filter(|_| named.iter().any(|(t, _)| norm(t) == norm(&item))) {
                     self.trace(&format!("bag: {item} is selected: Use"));
                     self.click(u)?;
+                    learned.push((format!("use:{tab}:{item}"), json!([u.x, u.y])));
+                    learned.push((format!("use:{tab}"), json!([u.x, u.y])));
                     self.move_mouse(lay.pt(layout::AFK_SPOT))?;
                     if target.is_none() {
+                        self.keep_spots(&f, &learned);
                         return Ok(Some(item));
                     }
                     step = "target";
@@ -406,6 +475,8 @@ impl Hunt {
                     if let Some(hit) = named.or_else(card) {
                         self.trace(&format!("bag: {item} on {target}{}", if named.is_none() { " (its card, the first)" } else { "" }));
                         self.click(hit)?;
+                        learned.push((format!("party:{in_battle}:{target}"), json!([hit.x, hit.y])));
+                        self.keep_spots(&f, &learned);
                         if in_battle {
                             // on a Pokemon that doesn't need it (its HP misread): "It won't have any
                             // effect.", and the party screen stays: its Close, back to the battle
@@ -574,6 +645,25 @@ impl Hunt {
         self.click(lay.pt(layout::FIGHT))?;
         self.move_mouse(lay.pt(layout::IDLE_SPOT))?;
         let v = lay.v();
+        // the move where the debug run found it: clicked without reading the list (its PP and names
+        // misread); only whether the move list is still up after tells it didn't take
+        let shot = self.grab();
+        if let (false, Some(at)) = (self.learning, self.spot(&shot, &format!("move:{mv}"))) {
+            self.nap(0.7)?;
+            self.trace(&format!("fight: {mv} (the spot from the debug run)"));
+            self.move_pp = None;
+            self.click(at)?;
+            self.move_mouse(lay.pt(layout::IDLE_SPOT))?;
+            self.nap(1.2)?;
+            let f = self.grab();
+            let texts = self.screen_texts(&f);
+            if texts.iter().any(|t| t.is("back")) && !texts.iter().any(|t| t.is("fight")) {
+                self.trace(&format!("fight: {mv} didn't take (no PP left?), back"));
+                self.back_to_menu(lay, 6.0)?;
+                return Ok("no pp");
+            }
+            return Ok("used");
+        }
         let end = now() + 6.0;
         while now() < end {
             self.nap(self.traits.poll)?;
@@ -598,6 +688,11 @@ impl Hunt {
                 self.trace(&format!("fight: {mv} has no PP left, back"));
                 self.back_to_menu(lay, 6.0)?;
                 return Ok("no pp");
+            }
+            for m in [mv.to_string(), self.c.cfg.str("sleep_move"), self.c.cfg.str("guard_move")] {
+                if let Some(t) = texts.iter().find(|t| !m.is_empty() && t.text.to_lowercase() == m.to_lowercase()) {
+                    self.put_spot(&f, &format!("move:{m}"), json!([t.x, t.y]));
+                }
             }
             self.trace(&format!("fight: {mv}{}", i.map(|i| format!(" ({} PP)", pps[i])).unwrap_or_default()));
             self.move_pp = i.map(|i| pps[i]);

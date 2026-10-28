@@ -354,6 +354,8 @@ pub struct Hunt {
     /// What the text recognition saw in the enemy's box last (for the website's log).
     pub(crate) box_read: String,
     pub(crate) menu_spots: Option<Map<String, Value>>,
+    /// The debug run is going: every bag and move position seen is saved over the old (menu.json).
+    pub(crate) learning: bool,
     pub(crate) timing: Option<Timing>,
     timing_is_times: bool,
     pub(crate) chat_closed_at: f64,
@@ -442,6 +444,7 @@ pub fn start(dev: Arc<dyn Device>, sink: Arc<dyn Sink>, debug: Arc<DebugChannel>
         pp_for: String::new(),
         box_read: String::new(),
         menu_spots: None,
+        learning: false,
         timing: None,
         timing_is_times: false,
         chat_closed_at: 0.0,
