@@ -278,6 +278,15 @@ impl Hunt {
                     self.click(spot)?;
                     self.move_mouse(lay.pt(layout::AFK_SPOT))?;
                     (step, picked_at) = ("use", now());
+                } else if phone && tab == "Pokeballs" && scroll.pages + scroll.at_top as u32 == 0 && now() - tab_at > 1.5
+                    && favorites_cover_list(&f, &texts, split, lay)
+                {
+                    // favorites sit at the top, a plain row under them is in sight: all the
+                    // favorites are, and this ball isn't one. Not searched for, not scrolled
+                    // to: the plan's other balls instead
+                    self.trace(&format!("bag: {item} isn't among the favorites in sight"));
+                    self.not_in_bag = item.clone();
+                    break;
                 } else if phone && !searched && now() - tab_at > 1.5 {
                     last_row_y = None;
                     // not a favorite: type it into the tab's search box (phones only: a PC never
@@ -1146,6 +1155,18 @@ impl Hunt {
         }
         Ok(false)
     }
+}
+
+/// The bag's list shows favorites (yellow tag) and, under them, a row that isn't one: the
+/// favorites all sit at the top, so every one of them is in sight.
+fn favorites_cover_list(f: &Frame, texts: &[TextHit], split: f64, lay: &Layout) -> bool {
+    let rows: Vec<bool> = {
+        let mut r: Vec<&TextHit> = texts.iter().filter(|t| is_count(&t.text) && t.x > split * 0.5).collect();
+        r.sort_by(|a, b| a.y.total_cmp(&b.y));
+        r.iter().map(|t| vision::favorited(f, texts, t.y, lay)).collect()
+    };
+    // a favorite first, then no favorite after the first plain row
+    rows.first() == Some(&true) && rows.iter().position(|&x| !x).is_some_and(|i| rows[i..].iter().all(|&x| !x))
 }
 
 /// A row of the bag, by its count tag's y: for the debug run's favorites.
