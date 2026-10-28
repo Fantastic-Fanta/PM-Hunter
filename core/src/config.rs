@@ -30,6 +30,8 @@ pub fn catch_plan() -> Map<String, Value> {
     json!({
         "first_ball": "Quick Ball", "sleep_move": "Yawn", "guard_move": "Protect",
         "asleep_ball": "Repeat Ball", "awake_ball": "Repeat Ball", "new_ball": "Timer Ball",
+        // a favorited Level Ball (x8) goes before every other ball; "" for none
+        "level_ball": "Level Ball",
         "max_balls": 6767,
         // x1 + 0.3 for each turn passed (x4 at most): past a Repeat Ball's x3.5 once 9 turns have gone by
         "timer_ball": "Timer Ball", "timer_after": 9,
