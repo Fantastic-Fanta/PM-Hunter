@@ -146,6 +146,69 @@ pub fn icons(f: &Frame, lay: &Layout) -> (bool, bool, bool) {
     (shiny, tint, owned)
 }
 
+/// A reskin's name is under the HP bar: the row right of the icons isn't all
+/// the box's gray (it is, without one), so Windows' text recognition missing it
+/// doesn't decide.
+pub fn reskin_shown(f: &Frame, lay: &Layout) -> bool {
+    let gray = lay.color("box").unwrap_or(layout::BOX_GRAY);
+    share(f, lay.boxed(layout::RESKIN_INK), |c| !near(c, gray, 25)) > 0.005
+}
+
+/// The gradient's tab hangs under the box, drawn with a thin dark outline: its
+/// bottom and a side are found (Some(true)), or not where the game around it is
+/// light enough to show one (Some(false)). None: too dark there to tell.
+pub fn gradient_tab(f: &Frame, lay: &Layout) -> Option<bool> {
+    let (left, right, bottom) = layout::TAB_EDGES;
+    let lum = |p: Pt| -> Option<i32> {
+        let (x, y) = (p.x.round() as i64, p.y.round() as i64);
+        (x >= 0 && y >= 0 && (x as u32) < f.width() && (y as u32) < f.height())
+            .then(|| px::at(f, x as usize, y as usize).iter().map(|&v| v as i32).max().unwrap())
+    };
+    // across a line at (x, y) (along: the line runs left to right): the darkest of a few
+    // px either way is well darker than 9 px out on both sides
+    let crosses = |x: f64, y: f64, along: bool| -> Option<bool> {
+        let at = |d: f64| if along { lay.xy(x, y + d) } else { lay.xy(x + d, y) };
+        let (d, dark) = (-5..=5).filter_map(|d| lum(at(d as f64)).map(|v| (d as f64, v))).min_by_key(|a| a.1)?;
+        let (a, b) = (lum(at(d - 9.0))?, lum(at(d + 9.0))?);
+        Some(dark + 25 < a.min(b))
+    };
+    let line = |pts: Vec<(f64, f64)>, along: bool| -> f64 {
+        let hits: Vec<bool> = pts.into_iter().filter_map(|(x, y)| crosses(x, y, along)).collect();
+        if hits.is_empty() { 0.0 } else { hits.iter().filter(|h| **h).count() as f64 / hits.len() as f64 }
+    };
+    let b = line((0..40).map(|i| (left as f64 + 15.0 + i as f64 * 9.0, bottom as f64)).collect(), true);
+    let side = |x: i32| line((0..8).map(|i| (x as f64, 494.0 + i as f64 * 4.0)).collect(), false);
+    if b >= 0.6 && side(left).max(side(right)) >= 0.6 {
+        return Some(true);
+    }
+    // under where it would be: light enough for a dark outline to stand out
+    let under = lay.boxf(left as f64, bottom as f64 + 6.0, right as f64, bottom as f64 + 16.0);
+    (share(f, under, |c| hi(c) > 70) > 0.5).then_some(false)
+}
+
+/// The game's white dialog box at the bottom (the save's messages: "Save successful",
+/// "Error. Your save did not save correctly." and the rest, up to ten of them): its
+/// middle, or None. Rows in the screen's lower part that are white nearly all
+/// the way across its middle.
+pub fn dialog_box(f: &Frame) -> Option<Pt> {
+    let (w, h) = (f.width() as i32, f.height() as i32);
+    let (l, r) = (w * 3 / 10, w * 7 / 10);
+    let rows: Vec<i32> = (h * 6 / 10..h)
+        .filter(|&y| share(f, IBox::new(l, y, r, y + 1), |c| lo(c) > 225) > 0.85)
+        .collect();
+    let (&top, &bottom) = (rows.first()?, rows.last()?);
+    (rows.len() as f64 > h as f64 * 0.04).then(|| Pt::new(w as f64 / 2.0, (top + bottom) as f64 / 2.0))
+}
+
+/// The white dialog box is done typing: its red arrow (bottom right) asks for a
+/// click. Something white on the ground isn't clicked for one.
+pub fn dialog_waiting(f: &Frame) -> Option<Pt> {
+    let at = dialog_box(f)?;
+    let (w, h) = (f.width() as i32, f.height() as i32);
+    let corner = IBox::new(w * 6 / 10, at.y as i32, w * 9 / 10, h);
+    (mask(f, corner, red).blobs().iter().any(|b| b.b.w() >= 4 && b.b.h() >= 4)).then_some(at)
+}
+
 /// How much of the screen isn't black, in %: 0 means the screenshot is blank.
 pub fn brightness(f: &Frame) -> u32 {
     let p = f.as_raw();

@@ -829,6 +829,20 @@ impl Hunt {
                 enc.gradient = g;
             }
         }
+        // whether there's a reskin or gradient at all is seen, not read: the text recognition
+        // only names them (Windows misses the colored rows on some reads, and reads junk)
+        let (reskin, tab) = (vision::reskin_shown(f, lay), vision::gradient_tab(f, lay));
+        seen.push(format!("seen: reskin {reskin}, gradient tab {}", tab.map_or("unsure".into(), |t| t.to_string())));
+        if !reskin {
+            enc.reskin.clear();
+        } else if enc.reskin.is_empty() {
+            enc.reskin = rules::UNREAD.into();
+        }
+        match tab {
+            Some(false) => enc.gradient.clear(),
+            Some(true) if enc.gradient.is_empty() => enc.gradient = rules::UNREAD.into(),
+            _ => {}
+        }
         (enc.shiny, enc.tint, enc.owned) = vision::icons(f, lay);
         self.box_read = seen.join(", ");
         enc
