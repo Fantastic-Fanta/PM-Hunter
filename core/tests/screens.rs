@@ -347,6 +347,7 @@ fn sees_reskins_and_gradient_tabs_without_reading() {
         ("lotad-skittles.png", false, true),
         ("tyrogue-mummified.png", true, false),
         ("tatsugiri-plain-tint.png", false, false),
+        ("runerigus-amberfall.png", false, true), // its tab right under the box: no reskin
         ("entei-plain.png", false, false),
         ("entei-coal.png", true, false),
         ("entei-galaxy.png", true, false),
@@ -361,6 +362,13 @@ fn sees_reskins_and_gradient_tabs_without_reading() {
         let lay = Layout::new(mute, &calibrate(&f, mute).unwrap_or_default());
         assert_eq!(vision::reskin_shown(&f, &lay), reskin, "{name}: reskin");
         assert_eq!(vision::gradient_tab(&f, &lay).unwrap_or(false), tab, "{name}: gradient tab");
+        // a window scaled a little off: the game 8 px from where the layout puts it
+        for (dx, dy) in [(0, -8), (0, 8), (-8, 0), (8, 0)] {
+            let mut g = px::Frame::from_pixel(f.width(), f.height(), image::Rgb([0, 0, 0]));
+            image::imageops::overlay(&mut g, &f, dx, dy);
+            assert_eq!(vision::reskin_shown(&g, &lay), reskin, "{name} moved {dx}, {dy}: reskin");
+            assert_eq!(vision::gradient_tab(&g, &lay).unwrap_or(false), tab, "{name} moved {dx}, {dy}: gradient tab");
+        }
     }
 }
 

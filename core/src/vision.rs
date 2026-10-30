@@ -148,10 +148,23 @@ pub fn icons(f: &Frame, lay: &Layout) -> (bool, bool, bool) {
 
 /// A reskin's name is under the HP bar: the row right of the icons isn't all
 /// the box's gray (it is, without one), so Windows' text recognition missing it
-/// doesn't decide.
+/// doesn't decide. Only lines of the box's gray count, down to its dark bottom
+/// edge: a window scaled a little off brings that edge or the gradient tab into
+/// the row, and they aren't a name.
 pub fn reskin_shown(f: &Frame, lay: &Layout) -> bool {
     let gray = lay.color("box").unwrap_or(layout::BOX_GRAY);
-    share(f, lay.boxed(layout::RESKIN_INK), |c| !near(c, gray, 25)) > 0.005
+    let r = lay.boxed(layout::RESKIN_INK);
+    let pad = (8.0 * lay.v()).round() as i32;
+    let (mut lines, mut ink, mut inside) = (0usize, 0.0, false);
+    for y in r.t - pad..r.b + pad {
+        let off = share(f, IBox::new(r.l, y, r.r, y + 1), |c| !near(c, gray, 25));
+        if off < 0.4 {
+            (lines, ink, inside) = (lines + 1, ink + off, true);
+        } else if inside {
+            break; // the box's bottom edge
+        }
+    }
+    lines > 0 && ink / lines as f64 > 0.005
 }
 
 /// The gradient's tab hangs under the box, drawn with a thin dark outline: its
@@ -164,11 +177,11 @@ pub fn gradient_tab(f: &Frame, lay: &Layout) -> Option<bool> {
         (x >= 0 && y >= 0 && (x as u32) < f.width() && (y as u32) < f.height())
             .then(|| px::at(f, x as usize, y as usize).iter().map(|&v| v as i32).max().unwrap())
     };
-    // across a line at (x, y) (along: the line runs left to right): the darkest of a few
-    // px either way is well darker than 9 px out on both sides
+    // across a line at (x, y) (along: the line runs left to right): the darkest of a dozen
+    // px either way (a window scaled a little off) is well darker than 9 px out on both sides
     let crosses = |x: f64, y: f64, along: bool| -> Option<bool> {
         let at = |d: f64| if along { lay.xy(x, y + d) } else { lay.xy(x + d, y) };
-        let (d, dark) = (-5..=5).filter_map(|d| lum(at(d as f64)).map(|v| (d as f64, v))).min_by_key(|a| a.1)?;
+        let (d, dark) = (-12..=12).filter_map(|d| lum(at(d as f64)).map(|v| (d as f64, v))).min_by_key(|a| a.1)?;
         let (a, b) = (lum(at(d - 9.0))?, lum(at(d + 9.0))?);
         Some(dark + 25 < a.min(b))
     };
